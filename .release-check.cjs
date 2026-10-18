@@ -42,9 +42,15 @@ const SAVE_KEY = 'neonclick.save.v1';
 const VENDOR = JSON.parse(fs.readFileSync(path.join(__dirname, 'tools', 'vendor.json'), 'utf8'));
 const ALLOWED = ['index.html', 'style.css', 'game.js', 'vk-integration.js', VENDOR.file];
 
-/** Что на боевом хостинге обязано ОТСУТСТВОВАТЬ (любой ответ, кроме 200). */
+/** Что на боевом хостинге обязано ОТСУТСТВОВАТЬ (любой ответ, кроме 200).
+ *  assets/moderation/* — материалы заявки в кабинет VK (иконка, скриншоты):
+ *  они живут в дереве репозитория и наружу смотреть не должны, сборщик берёт
+ *  только allowlist из пяти файлов. Проверяется здесь, по сети, а не по тексту
+ *  сборщика: «не уехало» — утверждение про хостинг, а не про регэксп. */
 const FOREIGN = ['package.json', 'package-lock.json', 'README.md', '.gitignore',
   '.vscode/settings.json', 'tools/vendor.json', 'tools/build-release.cjs',
+  'tools/make-moderation-assets.cjs', 'assets/moderation/icon-512.png',
+  'assets/moderation/screen-neon.png',
   '.smoke-test.cjs', '.vk-mock-check.cjs', '.stress-check.cjs', '.visual-check.cjs',
   'base_smoke.txt', 'base_vk.txt', 'node_modules/jsdom/package.json', '_site/index.html', '.git/config'];
 
