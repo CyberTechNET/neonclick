@@ -1,0 +1,49 @@
+name: deploy-pages
+
+# Один источник правды: боевой каталог не коммитится, а собирается из исходников
+# tools/build-release.cjs (allowlist + вырезание отладочного хука + cache-bust).
+# Поэтому источник публикации — GitHub Actions, а не ветка: Jekyll к файлам не
+# применяется, и на сервер не уезжает ничего из набора проверок.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Сборка артефакта
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # У сборщика нет зависимостей (только node:fs/crypto/child_process),
+      # поэтому npm ci здесь не нужен: jsdom и puppeteer-core на сервер не едут.
+      - name: Собрать _site
+        run: node tools/build-release.cjs
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Публикация на Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

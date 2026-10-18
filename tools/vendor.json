@@ -1,0 +1,16 @@
+{
+  "comment": [
+    "Провендоренный SDK VK Bridge. tools/build-release.cjs сверяет sha256 и байтовый",
+    "размер файла с этим манифестом и останавливает сборку при любом расхождении:",
+    "подмена чужим байтом в приложении, которое шлёт VKWebAppStorage* и собирает",
+    "репосты, — не риск, который надо замечать постфактум."
+  ],
+  "package": "@vkontakte/vk-bridge",
+  "version": "3.0.2",
+  "file": "vk-bridge.3.0.2.js",
+  "bytes": 4428,
+  "sha256": "827ba6f457cd9e73519b58b2c66564caf138645202f1bba37dca0b567f601bb4",
+  "source": "https://unpkg.com/@vkontakte/vk-bridge@3.0.2/dist/browser.min.js",
+  "license": "MIT",
+  "smoke": "Файл кончается на window.vkBridge=window.vkConnect=u; — по этому признаку сборка проверяет, что перед ней именно UMD-сборка, а не заглушка."
+}

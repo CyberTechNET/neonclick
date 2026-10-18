@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#06060d">
+  <meta name="description" content="NEON CLICK — минималистичный неоновый кликер для VK Mini Apps">
+  <title>NEON CLICK</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='88'%3E%F0%9F%AA%99%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Декоративный фон: сетка + неоновые пятна -->
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow bg-glow--a" aria-hidden="true"></div>
+  <div class="bg-glow bg-glow--b" aria-hidden="true"></div>
+
+  <div class="app">
+
+    <header class="topbar">
+      <div class="logo"><span class="logo__dot"></span><span id="logoTxt" data-t="logo">NEON&nbsp;CLICK</span></div>
+      <div class="topbar__actions">
+        <span id="cloudDot" class="cloud-dot" hidden title="Облако VK"></span>
+        <button id="btnSound" class="icon-btn" type="button" aria-pressed="true" title="Звук вкл/выкл">&#9834;</button>
+        <button id="btnReset" class="icon-btn" type="button" title="Сбросить прогресс">&#10227;</button>
+      </div>
+    </header>
+
+    <!-- ============ КОШЕЛЁК ============ -->
+    <section class="wallet">
+      <div class="wallet__row">
+        <div class="balance-wrap">
+          <div id="balance" class="balance">0</div>
+          <div class="balance-cap" id="balCap">монет</div>
+        </div>
+        <div class="wallet__rates">
+          <div class="rate"><span class="rate__label">за клик</span><span id="perClick" class="rate__value rate__value--cyan">+1</span></div>
+          <div class="rate"><span class="rate__label">в секунду</span><span id="perSecond" class="rate__value rate__value--green">+0</span></div>
+        </div>
+      </div>
+
+      <!-- Активный буст x2, выдаётся за рекламу -->
+      <div id="boost" class="boost" hidden>
+        <span class="boost__tag">x2 ПАССИВ</span>
+        <span id="boostTime" class="boost__time">05:00</span>
+        <div class="boost__bar"><i id="boostBar"></i></div>
+      </div>
+
+      <!-- Ранг и прогресс до него -->
+      <div class="rank">
+        <div class="rank__meta">
+          <span id="rankName" class="rank__name">Новичок</span>
+          <span id="rankHint" class="rank__hint">до след. ранга: 100</span>
+        </div>
+        <div class="rank__bar"><i id="rankBar"></i></div>
+      </div>
+    </section>
+
+    <!-- ============ СЦЕНА С МОНЕТОЙ ============ -->
+    <main id="stage" class="stage">
+      <canvas id="fx" class="fx-canvas" aria-hidden="true"></canvas>
+      <div id="floats" class="floats" aria-hidden="true"></div>
+
+      <button id="coin" class="coin" type="button" aria-label="Кликнуть по монете">
+        <span class="coin__halo"></span>
+        <span class="coin__ring"></span>
+        <span class="coin__body" id="coinBody">
+          <span class="coin__face" id="coinFace">&#9889;</span>
+          <span class="coin__gloss"></span>
+        </span>
+      </button>
+
+
+      <div id="combo" class="combo" hidden><b id="comboX">&times;1.0</b><span>комбо</span></div>
+      <p class="hint" data-t="hint">Жми по монете. Держи серию &mdash; лови крит.</p>
+    </main>
+
+    <!-- ============ НИЖНЯЯ ПАНЕЛЬ ============ -->
+    <section class="panel">
+      <nav class="tabs" role="tablist">
+        <button class="tab is-active" type="button" data-tab="shop" role="tab">Магазин</button>
+        <button class="tab" type="button" data-tab="bonus" role="tab">Бонусы<span class="tab__dot" id="bonusDot"></span></button>
+        <button class="tab" type="button" data-tab="guild" role="tab">Гильдия</button>
+      </nav>
+
+      <!-- --- Таб: Магазин апгрейдов --- -->
+      <div class="tabbody" id="tabShop" role="tabpanel">
+
+        <article class="card" id="cardClick">
+          <div class="card__icon card__icon--cyan">&#128070;</div>
+          <div class="card__main">
+            <h3 class="card__title">Сила клика</h3>
+            <p class="card__desc"><span id="clickEffect">+1</span> за клик &middot; <b id="clickLevel">Ур. 0</b></p>
+          </div>
+          <button class="buy" id="buyClick" type="button">
+            <span class="buy__cost" id="clickCost">50</span>
+            <span class="buy__cur" data-curicon>&#129689;</span>
+          </button>
+        </article>
+
+        <article class="card card--auto" id="cardAuto">
+          <div class="card__icon card__icon--green">&#9935;&#65039;</div>
+          <div class="card__main">
+            <h3 class="card__title">Авто-майнинг</h3>
+            <p class="card__desc"><span id="autoEffect">+5</span> монет/сек &middot; <b id="autoLevel">Ур. 0</b></p>
+          </div>
+          <button class="buy buy--auto" id="buyAuto" type="button">
+            <span class="buy__cost" id="autoCost">250</span>
+            <span class="buy__cur" data-curicon>&#129689;</span>
+          </button>
+        </article>
+
+        <div class="stats">
+          <div class="stat"><span id="statTotal" class="stat__v">0</span><span class="stat__l">заработано</span></div>
+          <div class="stat"><span id="statClicks" class="stat__v">0</span><span class="stat__l">кликов</span></div>
+          <div class="stat"><span id="statUpgrades" class="stat__v">0</span><span class="stat__l">апгрейдов</span></div>
+        </div>
+      </div>
+
+      <!-- --- Таб: Бонусы (точки монетизации VK) --- -->
+      <div class="tabbody" id="tabBonus" role="tabpanel" hidden>
+
+        <!-- --- Соло «Ва-банк» (раздел 13c в game.js). ЭТО НЕ точка монетизации:
+             реклама не показывается, монеты не создаются — проигрыш выводит
+             валюту из игры, выигрыш возвращает свою же ставку.
+             data-t у карточки намеренно нет: механика вне контракта темы
+             (THEME_COPY_KEYS), название валюты подставляет renderRiskCta()
+             из TM().cur — тема переживает ребрендинг без расширения реестра. -->
+        <div class="risk" id="riskCard">
+          <div class="risk__head">
+            <span class="risk__ico">&#127922;</span>
+            <span class="risk__txt">
+              <b class="risk__title">Ва-банк</b>
+              <i class="risk__sub">Ставка против банка игры</i>
+            </span>
+            <span class="risk__quota" id="riskQuota">3/3</span>
+          </div>
+          <div class="risk__chips" id="riskChips" role="group" aria-label="Доля баланса под ставку">
+            <button class="chip" type="button" data-idx="0" aria-pressed="false">25%</button>
+            <button class="chip" type="button" data-idx="1" aria-pressed="false">50%</button>
+            <button class="chip chip--allin is-on" type="button" data-idx="2" aria-pressed="true">Ва-банк</button>
+          </div>
+          <div class="risk__row">
+            <span class="risk__amount" id="riskAmount">0</span>
+            <button class="buy buy--risk" id="btnRisk" type="button"><span id="riskCta">Играть</span></button>
+          </div>
+          <p class="risk__note" id="riskNote">Проигрыш сгорает навсегда, победа возвращает ставку и даёт буст &times;2.</p>
+        </div>
+
+        <button class="ad" id="btnDouble" type="button">
+          <span class="ad__ico">&#127916;</span>
+          <span class="ad__txt">
+            <b data-t="adDouble">Удвоить пассивный доход</b>
+            <i data-t="adDoubleSub">&times;2 к авто-майнингу на 5 минут</i>
+          </span>
+          <span class="ad__cta" id="doubleCta">Реклама</span>
+        </button>
+
+        <button class="ad ad--gold" id="btnCoins" type="button">
+          <span class="ad__ico" data-curicon>&#129689;</span>
+          <span class="ad__txt">
+            <b data-t="adCoins">Получить +1000 монет</b>
+            <i data-t="adCoinsSub">Разовая награда за просмотр</i>
+          </span>
+          <span class="ad__cta" id="coinsCta">Реклама</span>
+        </button>
+
+        <button class="ad ad--share" id="btnShare" type="button">
+          <span class="ad__ico">&#128227;</span>
+          <span class="ad__txt">
+            <b data-t="adShare">Поделись игрой с другом</b>
+            <i id="shareNote" data-t="adShareSub">+500 монет за репост</i>
+          </span>
+          <span class="ad__cta" id="shareCta">Репост</span>
+        </button>
+
+        <p class="note" id="adNote" data-t="adNote">Награда выдаётся после просмотра видеоролика. Реклама &mdash; сервис VK.</p>
+      </div>
+
+      <!-- --- Таб: Гильдия и недельный рейд (раздел 13d в game.js) ---
+           ЭТО НЕ точка монетизации: реклама не показывается, монеты не создаются.
+           Честь покупает только ВРЕМЯ буста &times;2.
+           data-t у карточек намеренно нет: имя сообщества приходит из VK и
+           меняется без нашего участия, а статус участника — величина
+           производная. Название валюты подставляет renderRaid() из TM().cur —
+           тот же приём, что у риск-раунда: тема переживает ребрендинг без
+           расширения реестра токенов. -->
+      <div class="tabbody" id="tabGuild" role="tabpanel" hidden>
+
+        <section class="guild" id="guildCard">
+          <div class="guild__head">
+            <img class="guild__photo" id="guildPhoto" alt="" hidden>
+            <span class="guild__txt">
+              <b class="guild__name" id="guildName">Гильдии недоступны</b>
+              <i class="guild__tag" id="guildTag">нет подключения к VK</i>
+            </span>
+            <span class="guild__state" id="guildState">Не проверено</span>
+          </div>
+          <p class="guild__role" id="guildRole">Роль в гильдии не определена</p>
+          <p class="guild__hint" id="guildHint">Открой игру из папки сообщества VK &mdash; оно и станет твоей гильдией.</p>
+          <label class="guild__pick" for="guildPicker">
+            <span class="guild__pickl">Гильдия</span>
+            <select class="guild__select" id="guildPicker" aria-label="Выбор гильдии"></select>
+          </label>
+          <div class="guild__row">
+            <button class="btn btn--ghost guild__out" id="btnGuildLeave" type="button" disabled>Выйти</button>
+            <span class="guild__mult" id="guildMult">&times;1.25</span>
+            <button class="buy buy--guild" id="btnGuildJoin" type="button" disabled>Вступить</button>
+          </div>
+        </section>
+
+        <section class="raid" id="raidCard">
+          <div class="raid__head">
+            <span class="raid__ico">&#9876;&#65039;</span>
+            <span class="raid__txt">
+              <b class="raid__title">Рейд недели</b>
+              <i class="raid__sub">до закрытия: <span id="raidWeek">&mdash;</span></i>
+            </span>
+            <span class="raid__tier" id="raidTier">Без звания</span>
+          </div>
+
+          <div class="raid__meter" role="presentation"><div class="raid__fill" id="raidBar"></div></div>
+          <div class="raid__line">
+            <span class="raid__earned" id="raidEarned">0</span>
+            <b class="raid__pending" id="raidPending">+0</b>
+            <span class="raid__per" id="raidPer">за 1000</span>
+          </div>
+
+          <div class="raid__stats">
+            <span class="raid__stat"><b id="raidHonor">0</b><i>честь</i></span>
+            <span class="raid__stat"><b id="raidLife">0</b><i>пожизненно</i></span>
+            <span class="raid__stat"><b id="raidBest">0</b><i>лучшая неделя</i></span>
+            <span class="raid__stat"><b id="raidTries">0</b><i>недель</i></span>
+          </div>
+
+          <div class="raid__tiermeter" role="presentation"><div class="raid__tierfill" id="raidTierBar"></div></div>
+          <p class="raid__tierhint" id="raidTierHint">до «Новобранец»: 50 чести</p>
+
+          <div class="raid__row">
+            <span class="raid__quota" id="raidQuota">2/2</span>
+            <button class="buy buy--raid" id="btnRaidRedeem" type="button" disabled><span id="raidRedeemCta">Буст &times;2 &middot; 15 мин</span></button>
+          </div>
+          <p class="raid__note" id="raidNote">Честь покупает время добычи &times;2 и никогда не выдаёт монет.</p>
+        </section>
+      </div>
+    </section>
+  </div>
+
+  <!-- ============ МОДАЛКА ПОДТВЕРЖДЕНИЯ ============ -->
+  <div id="modal" class="modal" hidden>
+    <div class="modal__box" role="dialog" aria-modal="true">
+      <h3 class="modal__title" id="modalTitle">Сбросить прогресс?</h3>
+      <p class="modal__text" id="modalText">Монеты, уровни апгрейдов и ранг будут удалены навсегда.</p>
+      <div class="modal__actions">
+        <button class="btn btn--ghost" id="modalCancel" type="button">Отмена</button>
+        <button class="btn btn--danger" id="modalOk" type="button">Сбросить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Контейнер всплывающих уведомлений -->
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script src="vk-integration.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

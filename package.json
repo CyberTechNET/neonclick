@@ -1,0 +1,24 @@
+{
+  "name": "neon-clicker-dev",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev-only manifest for the five regression harnesses (.smoke-test / .vk-mock-check / .visual-check / .stress-check / .release-check). NOT part of the VK Mini App release. The release is assembled by tools/build-release.cjs into _site/ from exactly five files: index.html, style.css, game.js, vk-integration.js and the vendored vk-bridge (tools/vendor.json). Nothing here is loaded by the app.",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build:release": "node tools/build-release.cjs",
+    "serve:release": "python -m http.server 5173 --directory _site",
+    "test:smoke": "node .smoke-test.cjs",
+    "test:vk": "node .vk-mock-check.cjs",
+    "test:visual": "node .visual-check.cjs",
+    "test:stress": "node .stress-check.cjs",
+    "test:release": "node .release-check.cjs",
+    "test": "npm run build:release && npm run test:smoke && npm run test:vk && npm run test:visual && npm run test:stress"
+  },
+  "engines": {
+    "node": "^22.13.0 || >=24.0.0"
+  },
+  "devDependencies": {
+    "jsdom": "29.1.1",
+    "puppeteer-core": "25.14.0"
+  }
+}

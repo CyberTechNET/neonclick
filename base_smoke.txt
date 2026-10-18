@@ -1,0 +1,291 @@
+
+============ NEON CLICK :: smoke test ============
+
+[0] Сборка: DEMO_MODE в репозитории выключен
+   ✅ в vk-integration.js нет включённого флага демо-режима
+   ✅ в vk-integration.js флаг объявлен выключенным — собирать можно
+   ✅ демо-сборка для тестов корректно подставляется из боевой
+   ✅ демо-сборка отличается от репозиторной и существует только в прогоне
+[1] Boot, кликер, комбо
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ window.VK API собран
+   ✅ вне VK включён демо-режим
+   ✅ game.js инициализировался
+   ✅ новый игрок стартует с нуля
+   ✅ HUD показывает 0
+   ✅ 6 тапов = 6+ монет, клики учтены
+   ✅ комбо-индикатор появился
+   ✅ множитель комбо ×1.06
+   ✅ всплывающие «+N» отрисованы
+   ✅ монеты не потерялись после паузы
+   ✅ комбо свернулось после паузы
+
+[2] Магазин апгрейдов
+   ✅ покупка без монет отклонена
+   ✅ карточка отреагировала отказом
+   ✅ показан текст нехватки
+   ✅ «Авто-майнинг» куплен
+   ✅ списано ровно 250
+   ✅ цена следующего уровня 295
+   ✅ уровень подписан
+   ✅ пассив +5/сек
+   ✅ «Сила клика» куплена за 50
+   ✅ сила тапа +2
+   ✅ статистика апгрейдов
+
+[3] Пассивный доход
+   ✅ авто-майнинг капает ~5 монет/сек
+
+[4] Монетизация: rewarded ads (демо)
+   ✅ подсказка объясняет демо-режим
+   ✅ на табе «Бонусы» горит точка наград
+   ✅ CTA в состоянии загрузки
+   ✅ награда +1000 монет выдана
+   ✅ счётчик просмотров вырос
+   ✅ CTA вернулся в обычное состояние
+   ✅ тост о награде показан
+   ✅ кулдаун защищает от двойного показа
+   ✅ буст ×2 активен ~5 минут
+   ✅ пассив удвоился до 10/сек
+   ✅ плашка буста видна
+   ✅ таймер буста в формате M:SS
+
+[5] Сохранение прогресса
+   ✅ сейв появился в LocalStorage без явного вызова
+   ✅ схема сейва v3 и уровни записаны
+   ✅ поля репоста действительно лежат в сейве (иначе подпись v2 их не покрывает)
+   ✅ поля риск-раунда лежат в сейве (иначе подпись v3 их не покрывает, а write-ahead не переживёт рестарт)
+   ✅ баланс в сейве совпадает с игрой
+   ✅ записано время выхода
+   ✅ срок буста тоже сохраняется
+
+[6] Офлайн-доход, звания, форматирование
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ офлайн за 1 час ≈ 18000 монет (50% эффективности)
+   ✅ тост об офлайн-доходе
+   ✅ баланс перешагнул 10К
+   ✅ баланс разбит тонким пробелом
+   ✅ звание повысилось до «Мастер»
+   ✅ подсказка о следующем звании
+
+[7] Интерфейс: табы, звук, сброс
+   ✅ таб «Бонусы» открыт
+   ✅ активный таб подсвечен
+   ✅ таб «Магазин» вернулся
+   ✅ звук выключен
+   ✅ aria-pressed обновлён
+   ✅ звук снова включён
+   ✅ открыто подтверждение сброса
+   ✅ отмена ничего не удалила
+   ✅ прогресс сброшен
+   ✅ модалка закрыта
+   ✅ HUD обнулился
+
+[8] Монетизация внутри VK: успех и отказы
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ окружение распознано как VK (не демо)
+   ✅ обязательный VKWebAppInit отправлен
+   ✅ точка наград горит при наличии заполнения
+   ✅ подсказка про награду
+   ✅ VK: +1000 монет за досмотренный ролик
+   ✅ сначала запрошен VKWebAppCheckNativeAds
+   ✅ затем вызван VKWebAppShowNativeAds(format=reward)
+   ✅ ссылка для репоста — канонический vk.com/app…, а не адрес хостинга
+   ✅ VK.share: репост подтверждён (непустой LinkShareResult[])
+   ✅ в мост ушла каноническая ссылка VK
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ VK.share: отказ игрока распознан как false (пустой массив — truthy, ловушка)
+   ✅ за отказ сообщение «Спасибо за репост» не показывается
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ карточка репоста показывает остаток суточного лимита
+   ✅ три репоста в сутки оплачены по 500 монет
+   ✅ четвёртый репост тех же суток НЕ оплачен: кран монет закручен
+   ✅ счётчики репостов выросли ровно на 3
+   ✅ игрок уведомлён об исчерпанном суточном лимите
+   ✅ карточка погасла: наград сегодня больше нет
+   ✅ схема состояния — v3 (поля риск-раунда)
+   ✅ облачный пакет v3 — 23 поля
+   ✅ облачный пакет v1 распакован без потерь (shares=0 — репостов ещё не было)
+   ✅ пакет v1 с неверной подписью отклонён
+   ✅ пакет чужой версии схемы отклонён (подпись верна, не устраивает именно версия)
+   ✅ собственный пакет v3 проходит свою же проверку
+   ✅ облачный пакет v2 распакован без потерь (репосты доехали)
+   ✅ у пакета v2 нет незакрытого раунда: rpStake=0, а не выдуманное значение
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ сейв v1 с подписью v1 НЕ помечен повреждённым
+   ✅ прогресс v1 переехал в v3 без потерь
+   ✅ у мигрировавшего v1 нет ни сгоревших монет, ни незакрытого раунда
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ сейв v2 с подписью v2 НЕ помечен повреждённым
+   ✅ прогресс v2 переехал в v3 без потерь (репосты целы)
+   ✅ пакет, собранный v3-кодом с мигрировавшим v2, читается самим же v3
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ без заполнения монеты не начислены
+   ✅ ролик не запрашивается без заполнения
+   ✅ показан «красивый» отказ VK
+   ✅ подсказка о недоступности рекламы
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ за досрочно закрытый ролик награды нет
+   ✅ текст о недосмотренном ролике
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ при ошибке SDK награды нет
+   ✅ расшифрован код ошибки 3
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ VK: буст ×2 активирован за ролик
+   ✅ VK: пассив удвоен
+   ✅ VK: 24 ролика подряд не вывели буст за потолок 90 мин
+   ✅ VK: потолок достигается, а не режет буст на первой же награде
+   ✅ VK: просмотры засчитаны — насыщение не «съедает» награды молча
+   ✅ прогресс записан при уходе в фон VK
+
+[9] Темы: мгновенный ребрендинг
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ реестр тем без опечаток и пропусков
+   ✅ в реестре >= 3 тем, дефолт первая
+   ✅ :root --cyan == THEMES.neon.accent
+   ✅ :root --magenta == THEMES.neon.accent2
+   ✅ :root --bg-top == THEMES.neon.bgTop
+   ✅ :root --bg == THEMES.neon.bg
+   ✅ data-theme выставлен на <html>
+   ✅ <title> = имя продукта из темы
+   ✅ подпись баланса — валюта темы
+   ✅ монета несёт глиф темы
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ свежий ?theme=sat: шапка на теме, а не на встроенном в HTML тексте
+   ✅ свежий ?theme=sat: <title> выставлен движком
+   ✅ свежий ?theme=sat: описание тоже следует за брендом (в каталоге не пахнет прошлым продуктом)
+   ✅ свежий ?theme=sat: валюта под балансом из темы
+   ✅ свежий ?theme=sat: карточка рекламы собрана из токенов
+   ✅ тема "neon" применена без отказа
+   ✅ тема "neon": все статические тексты привязаны
+   ✅ тема "neon": валюта в подписи баланса
+   ✅ тема "neon": глиф монеты
+   ✅ тема "neon": иконка валюты единая во всём UI
+   ✅ тема "neon": подпись репоста говорит на валюте темы
+   ✅ тема "neon": <title> переименован
+   ✅ тема "meme" применена без отказа
+   ✅ тема "meme": все статические тексты привязаны
+   ✅ тема "meme": валюта в подписи баланса
+   ✅ тема "meme": глиф монеты
+   ✅ тема "meme": иконка валюты единая во всём UI
+   ✅ тема "meme": подпись репоста говорит на валюте темы
+   ✅ тема "meme": <title> переименован
+   ✅ тема "sat" применена без отказа
+   ✅ тема "sat": все статические тексты привязаны
+   ✅ тема "sat": валюта в подписи баланса
+   ✅ тема "sat": глиф монеты
+   ✅ тема "sat": иконка валюты единая во всём UI
+   ✅ тема "sat": подпись репоста говорит на валюте темы
+   ✅ тема "sat": <title> переименован
+   ✅ ключи хранилища — константы, а не производные от бренда
+   ✅ ни одна тема не ссылается на дальний ассет
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ ?theme= переключает бренд без правки кода
+   ✅ прогресс с прошлого бренда прочитан: ребрендинг НЕ сбрасывает базу
+   ✅ мемо-сборка получает награду как все
+   ✅ награда озвучена валютой темы
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ несуществующая ?theme= отброшена на дефолт
+   ✅ игра всё равно запускается
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 9.5b тема из location_search (именно так её привозит VK)
+   ✅ 9.5b location_search: шапка на теме, а не на дефолте
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 9.5b тема из хэша (QR и часть размещений кладут параметры туда)
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 9.5b хэш вида «#/?theme=» тоже распознаётся
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 9.5b приоритет у собственного ?theme=, location_search его не перекрывает
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 9.5b мусор в location_search не доходит до витрины (исход, клампится дважды)
+   ✅ 9.5b игра с мусорным location_search всё равно запускается
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ неон: ступень 1e6 = «Неон»
+   ✅ мемо: та же ступень переименована
+
+[10] Соло «Ва-банк»: ставка, write-ahead, сток валюты
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.1 ва-банк = весь баланс
+   ✅ 10.1 write-ahead: ставка списана и раунд записан ДО раскрытия
+   ✅ 10.1 write-ahead не тронул S.total
+   ✅ 10.1 поражение: монеты сгорели, учёт стока вырос
+   ✅ 10.1 после поражения S.total прежний — валюта ВЫШЛА из игры, а не переехала
+   ✅ 10.1 раунд закрыт: незакрытых ставок не висит
+   ✅ 10.1 сток виден игроку: карточка показывает «сгорело всего» с валютой темы
+   ✅ 10.1 до первого поражения строка стока не появляется (иначе это декорация)
+   ✅ 10.1 риск-раунд не показывает рекламу (это не точка монетизации)
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.2 победа возвращает ровно ставку — ни монетой больше (больше = кран)
+   ✅ 10.2 КРИТИЧНО: победа НЕ увеличивает S.total (earn()/grant() тут запрещены)
+   ✅ 10.2 учёт: победа записана, сгоревшего нет
+   ✅ 10.2 приз — ВРЕМЯ буста по индексу ставки (ва-банк = 15 мин ×2)
+   ✅ 10.2 КРИТИЧНО: CFG.boost.mult остался 2. Поднять его нельзя: plausibleCap() считает пассивный потолок из расчёта постоянно включённого ×2, и больший множитель молча срезал бы баланс честного победителя
+   ✅ 10.2 приз по времени не выходит за край maxBoostAheadMs
+   ✅ 10.2 конфиг цельный: каждой доле соответствует награда (иначе boostMs[i] → undefined → NaN-буст и мёртвый приз молча)
+   ✅ 10.2 последняя доля — ровно 100%: «Ва-банк» обязан означать весь баланс, а не 90%
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.3 (поражение) на момент смерти раунд уже решён и записан
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.3 (поражение) при старте незакрытый раунд доигран
+   ✅ 10.3 (поражение) прерванный раунд не помечен читом
+   ✅ 10.3 (поражение) рестарт не тронул S.total
+   ✅ 10.3 поражение НЕ переиграно рестартом (иначе сток = 0, а механика бессмысленна)
+   ✅ 10.3 ставка 50% = половина баланса
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.3 (победа) на момент смерти раунд уже решён и записан
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.3 (победа) при старте незакрытый раунд доигран
+   ✅ 10.3 (победа) прерванный раунд не помечен читом
+   ✅ 10.3 (победа) рестарт не тронул S.total
+   ✅ 10.3 выигранная ставка НЕ украдена рестартом: возврат на месте
+   ✅ 10.3 при возврате «сгорело» не растёт
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.4 лимит выбран досуха
+   ✅ 10.4 причина отказа — limit
+   ✅ 10.4 кнопка «Играть» задизейблена
+   ✅ 10.4 карточка погасла, а не дразнится
+   ✅ 10.4 сверх лимита ставка не списывается (иначе — монеты в никуда)
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.5 на мелком балансе раунд запрещён
+   ✅ 10.5 отказ ничего не списывает и не оставляет незакрытый раунд
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.5b тройной вызов завёл РОВНО ОДИН раунд: ставка списана один раз
+   ✅ 10.5b после раскрытия баланс и S.total вернулись к исходным (ничего не создано и не удвоено)
+   ✅ 10.5b засчитан ровно один раунд и один расход суточного лимита
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.6 завышенная rpStake не создала монет: инвариант coins ≤ total держится
+   ✅ 10.6 возврат ограничен заработанным и раунд закрыт
+   ✅ 10.6 фальшивая ставка замечена как нарушение
+   ✅ 10.6 «сгорело» не может превысить «всего заработано»
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.7 серия побед не создаёт монет: баланс стоит на 1e9
+   ✅ 10.7 серия побед не создаёт монет: баланс стоит на 1e9
+   ✅ 10.7 серия побед не создаёт монет: баланс стоит на 1e9
+   ✅ 10.7 серия побед не создаёт монет: баланс стоит на 1e9
+   ✅ 10.7 серия побед не создаёт монет: баланс стоит на 1e9
+   ✅ 10.7 серия побед не создаёт монет: баланс стоит на 1e9
+   ✅ 10.7 серия побед ва-банком не выводит буст за 90-минутный край
+   ✅ 10.7 край достигается, а не режется на первой же победе
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.8 легальный проигрыш не похож на чит: susp не вырос
+   ✅ 10.8 баланс после легального стока НЕ срезан потолком правдоподобия
+   ✅ 10.8 S.total после боевой загрузки прежний
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.9 карточка, кнопка и чипы есть в разметке
+   ✅ 10.9 сумма ставки пересчиталась за чипом 25%
+   ✅ 10.9 счётчик суточного лимита
+   ✅ 10.9 чипов в разметке ровно столько, сколько долей в конфиге, и каждый с aria-pressed
+   ✅ 10.9 выбранная доля отмечена: скринридер читает ставку, а не «три одинаковые кнопки»
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.9 в теме ?theme=sat ставка названа её валютой, а не «монетами»
+   [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
+   ✅ 10.9b заполнение действительно мертво: подсказка говорит «нет заполнения»
+   ✅ 10.9b реклама при этом не платит (иначе проверка ниже была бы пустой)
+   ✅ 10.9b при той же мёртвой рекламе ставка доступна
+   ✅ 10.9b раунд реально сыгран без единого показанного ролика
+   ✅ 10.9b ставка ничего не создала: coins ≤ прежнего, total не двинулся
+
+========== ИТОГ: 227 ok / 0 fail ==========
+
