@@ -112,17 +112,24 @@ if (!sdkRef) fail('vk-integration.js: не найден SDK_LOCAL — цепоч
 else if (sdkRef[1] !== VENDOR.file) fail('vk-integration.js: SDK_LOCAL = ' + sdkRef[1] + ', а провендорен ' + VENDOR.file);
 
 /* ---------- 4. index.html: ?v= по содержанию КОНЕЧНЫХ файлов ---------- */
+/**
+ * EOL-нормализация. Рабочее дерево на Windows живёт с CRLF, чекаут в Actions —
+ * с LF, и без этого шага один и тот же коммит давал бы два разных артефакта с
+ * разными ?v. Нормализуем в LF здесь, в сборке: детерминизм должен быть свойством
+ * конвейера, а не состоянием конкретного диска.
+ */
+const norm = (t) => t.replace(/\r\n/g, '\n');
 const ART = {
   'index.html': null,
-  'style.css': SRC['style.css'],
-  'game.js': gameOut,
-  'vk-integration.js': vkOut,
-  [VENDOR.file]: sdkOut
+  'style.css': norm(SRC['style.css']),
+  'game.js': norm(gameOut),
+  'vk-integration.js': norm(vkOut),
+  [VENDOR.file]: norm(sdkOut)
 };
 const ver = {};
 for (const name of HTML_ASSETS) ver[name] = sha256(Buffer.from(ART[name], 'utf8')).slice(0, 8);
 
-let htmlOut = SRC['index.html'];
+let htmlOut = norm(SRC['index.html']);
 for (const name of HTML_ASSETS) {
   let hits = 0;
   htmlOut = htmlOut.replace(new RegExp('(src|href)="(' + esc(name) + ')"', 'g'), (m, attr, f) => {

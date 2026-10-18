@@ -27,6 +27,7 @@
  * без сети:  python -m http.server 5173 --directory _site
  * ========================================================================== */
 'use strict';
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer-core');
@@ -221,6 +222,32 @@ async function tap(page, n) {
     ok(geo.sw <= geo.iw + 1, 'горизонтального скролла на 390px нет', geo);
     ok(s.errs.length === 0, 'ошибок страницы нет', s.errs);
     if (s.warns.length) log('варнинги консоли (справка): ' + JSON.stringify(s.warns.slice(0, 5)));
+
+    /* ==================================================================== */
+    log('\n[8] Целостность выкладки: ?v= совпадает с sha256 отданных байтов');
+    // Смысл не в красоте имён ресурсов, а в атомарности: index.html и файлы
+    // едут с разных краёв Fastly и в разное время. Если отданный index.html
+    // новее, чем game.js на крае (или наоборот), ?v разойдётся с фактическим
+    // содержимым — и игрок получит смесь двух версий. Здесь это ловится.
+    const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
+    const getBuf = async (u) => {
+      const r = await fetch(u, { cache: 'no-store' });
+      return r.status === 200 ? { status: r.status, buf: Buffer.from(await r.arrayBuffer()) } : { status: r.status };
+    };
+    const htmlRes = await getBuf(ORIGIN + '/index.html');
+    ok(htmlRes.status === 200, 'index.html перечитывается для сверки хэшей', htmlRes.status);
+    const html = htmlRes.buf ? htmlRes.buf.toString('utf8') : '';
+    const seen = [];
+    for (const m of html.matchAll(/(?:src|href)="([^"?]+)\?v=([0-9a-f]{8})"/g)) {
+      const name = m[1].split('/').pop();
+      const v = m[2];
+      const res = await getBuf(ORIGIN + '/' + name + '?v=' + v);
+      const actual = res.buf ? sha256(res.buf).slice(0, 8) : 'нет 200';
+      seen.push(name + '=' + actual);
+      ok(res.status === 200 && actual === v,
+        name + ': ?v=' + v + ' совпал со sha256 фактически отданных байтов', { v: v, actual: actual, status: res.status });
+    }
+    ok(seen.length === 3, 'перечислены все три versionированных ресурса', seen);
   } finally {
     await browser.close();
   }
