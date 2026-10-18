@@ -276,6 +276,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .hint { position: absolute; top: 0; left: 0; right: 0; margin: 0; text-align: center; font-size: 11px; color: var(--muted); letter-spacing: .04em; }
 /* ---------- Нижняя панель ---------- */
 .panel {
+  position: relative;                             /* к панели цепляется подложка-подсказка скролла */
   flex: none;
   display: flex; flex-direction: column; min-height: 0;
   max-height: 42vh;
@@ -307,9 +308,48 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   flex: 1 1 auto; min-height: 0;               /* скроллится внутри панели с max-height */
   margin-top: 10px; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;
   display: flex; flex-direction: column; gap: 8px; padding-right: 2px;
+  scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .22) transparent;
 }
 .tabbody::-webkit-scrollbar { width: 3px; }
 .tabbody::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .16); border-radius: 99px; }
+
+/* Прямые дети тела таба НЕ сжимаются.
+   .tabbody — column-flex с ограниченной высотой. При дефолтном flex-shrink:1
+   браузер УМЯЛ карточки до высоты окна вместо того, чтобы выпустить их за край
+   и включить скролл: scrollHeight становился равен clientHeight, полоса прокрутки
+   не появлялась никогда, а недостающее молча срезал overflow:hidden самой
+   карточки. Замеренно на 390×844 «Ва-банк» рисовался 78px при содержимом 161px —
+   без чипов доли, суммы ставки, кнопки «Играть» и предупреждения; на 360×640 —
+   44px из 161px. «Гильдия» теряла до 132px. Лечится только запретом на сжатие:
+   высота возвращается содержимому, переполнение — панели, скролл — игроку. */
+.tabbody > * { flex: 0 0 auto; }
+
+/* ---------- Подсказка «ниже ещё есть» ----------
+   Скролл на тач-экранах невидим (ползунок в 3px не замечают), а панель
+   обрезана max-height: 42vh — значит за нижним краем гарантированно что-то
+   лежит. Пока внизу есть непросмотренное, панель рисует градиентный обрыв и
+   шеврон; дошли до дна — гаснет. Класс .is-more ставит game.js (syncMoreHint).
+   Чистым CSS это не делается: приём с background-attachment: local требует
+   глухой подложки цветом контейнера, а панель полупрозрачна и лежит на blur. */
+.panel::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+  height: 34px; border-radius: 0 0 var(--r-lg) var(--r-lg);
+  background: linear-gradient(180deg, rgba(9, 9, 18, 0), rgba(9, 9, 18, .95) 80%);
+  opacity: 0; pointer-events: none; transition: opacity .22s ease;
+}
+.panel::before {
+  content: ""; position: absolute; left: 50%; bottom: 8px; z-index: 3;
+  width: 7px; height: 7px;
+  border-right: 2px solid rgba(255, 255, 255, .8); border-bottom: 2px solid rgba(255, 255, 255, .8);
+  transform: translate(-50%, 0) rotate(45deg);
+  opacity: 0; pointer-events: none; transition: opacity .22s ease;
+}
+.panel.is-more::after { opacity: 1; }
+.panel.is-more::before { opacity: 1; animation: moreBob 1.5s ease-in-out infinite; }
+@keyframes moreBob {
+  0%, 100% { transform: translate(-50%, 0) rotate(45deg); }
+  50% { transform: translate(-50%, 4px) rotate(45deg); }
+}
 
 /* Карточки апгрейдов */
 .card {

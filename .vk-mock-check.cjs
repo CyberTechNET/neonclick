@@ -656,6 +656,35 @@ async function scenario(browser, scen, extraQ) {
     ok(chips.length === 3 && chips.every((c) => c.w > 10 && c.h > 10),
       'три чипа доли видимы и не схлопнулись (тап-таргеты живые)', chips);
 
+    /* Карточка не должна быть сплющена изнутри. .tabbody — column-flex с
+       ограниченной высотой панели: при flex-shrink по умолчанию карточка
+       уминалась до размера окна (78px при содержимом 161px на 390×844),
+       scrollHeight контейнера становился равен clientHeight, скролл не
+       появлялся, а чипы доли, сумма ставки, кнопка «Играть» и предупреждение
+       молча резались overflow:hidden. Признак здоровой вёрстки — высота рамки
+       равна содержимому, и все узлы внутри этой рамки. */
+    const fit = await r.page.$eval('#riskCard', (e) => {
+      const b = e.getBoundingClientRect();
+      const inside = (id) => {
+        const n = document.getElementById(id).getBoundingClientRect();
+        return n.top >= b.top - 1 && n.bottom <= b.bottom + 1;
+      };
+      return {
+        box: Math.round(b.height), content: e.scrollHeight,
+        chips: inside('riskChips'), cta: inside('btnRisk'), note: inside('riskNote'),
+        inWindow: (() => {
+          const t = document.getElementById('tabBonus').getBoundingClientRect();
+          return b.top >= t.top - 1 && b.bottom <= t.bottom + 1;
+        })()
+      };
+    });
+    ok(fit.content <= fit.box + 1,
+      'карточка «Ва-банк» не сплющена: высота рамки равна её содержимому', fit);
+    ok(fit.chips && fit.cta && fit.note,
+      'чипы доли, «Играть» и предупреждение лежат в рамке карточки, а не срезаны за ней', fit);
+    ok(fit.inWindow,
+      'вся карточка «Ва-банк» видна в окне таба без прокрутки (ставка — первый экран монетизации)', fit);
+
     const mBefore = (await methods(r.page)).length;
     const t0 = await r.page.evaluate(() => Math.floor(window.NEON.state().total));
     await r.page.click('#btnRisk');                            // ← настоящая мышь, не NEON.playRisk()

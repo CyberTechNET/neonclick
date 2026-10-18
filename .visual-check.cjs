@@ -333,6 +333,13 @@ function withDemo(src) {
       return {
         docW: document.documentElement.scrollWidth, innerW: window.innerWidth,
         open: !body.hidden, tabs: tabs,
+        // Высота карточки против высоты её же содержимого. Рассхождение — это
+        // flex-сжатие прямого ребёнка .tabbody: карточка уминается до окна
+        // панели, а scrollHeight контейнера при этом равен clientHeight, то
+        // есть скролл не появляется вообще и недостающее молча режет
+        // overflow:hidden самой карточки.
+        cards: [].slice.call(body.children).filter((e) => e.getBoundingClientRect().height > 0)
+          .map((e) => ({ id: e.id, squash: e.scrollHeight - Math.round(e.getBoundingClientRect().height) })),
         guild: box('guildCard'), raid: box('raidCard'),
         join: box('btnGuildJoin'), leave: box('btnGuildLeave'), redeem: box('btnRaidRedeem'),
         stats: ['raidHonor', 'raidLife', 'raidBest', 'raidTries', 'raidEarned', 'raidWeek'].map(box),
@@ -349,7 +356,66 @@ function withDemo(src) {
       [gu.join.h, gu.leave.h, gu.redeem.h]);
     ok2(gu.stats.every((s) => s && s.w > 0 && s.tx > 0 && !s.invisible),
       vp.w + '×' + vp.h + ': все рейдовые счётчики видимы и не пусты', gu.stats);
+    ok2(gu.cards.length === 2 && gu.cards.every((c) => c.squash <= 1),
+      vp.w + '×' + vp.h + ': карточки «Гильдии» не сплющены — высота равна содержимому', gu.cards);
     await shot('10-guild-' + vp.w + 'x' + vp.h);
+
+    /* --- 10b. Вкладка «Бонусы»: самая высокая карточка игры и подсказка скролла.
+       Здесь «Ва-банк» (163px) соседствует с тремя рекламными рядами, и весь этот
+       стек не влезает в панель, обрезанную max-height: 42vh. Значит важны два
+       независимых факта: карточки не умяты изнутри (иначе игрок не видит чипы
+       доли, сумму ставки и кнопку «Играть») и всё, что уехало за край, реально
+       достижимо прокруткой. Пока ниже есть непросмотренное, на панели горит
+       подложка с шевроном (.is-more); на дне она обязана погаснуть. */
+    await page.click('.tab[data-tab="bonus"]');
+    await sleep(250);
+    const bo = await page.evaluate(async () => {
+      const body = document.getElementById('tabBonus');
+      const panel = document.getElementById('panel');
+      const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      // Подложка гаснет переходом .22s: читаем только устоявшуюся прозрачность,
+      // иначе проверка ловит середину анимации.
+      const settle = () => new Promise((r) => setTimeout(r, 320));
+      const lit = () => ({
+        cls: panel.classList.contains('is-more'),
+        fade: Number(getComputedStyle(panel, '::after').opacity)
+      });
+      const cards = [].slice.call(body.children).filter((e) => e.getBoundingClientRect().height > 0)
+        .map((e) => ({ id: e.id, squash: e.scrollHeight - Math.round(e.getBoundingClientRect().height) }));
+      const overflow = body.scrollHeight - body.clientHeight;
+      body.scrollTop = 0;
+      await settle(); await frame();
+      const top = lit();
+      body.scrollTop = body.scrollHeight;
+      await settle(); await frame();
+      const end = lit();
+      const box = body.getBoundingClientRect();
+      const lastBox = body.lastElementChild.getBoundingClientRect();
+      // elementFromPoint никогда не возвращает псевдоэлемент: если подложка
+      // лишится pointer-events:none, хостом окажется сама .panel — проверка
+      // поймает это как «тап не доходит до контента таба».
+      const hit = document.elementFromPoint(Math.round(box.x + box.width / 2), Math.round(box.bottom - 6));
+      body.scrollTop = 0;
+      await settle();
+      return {
+        cards, overflow, top, end,
+        lastShown: lastBox.top >= box.top - 1 && lastBox.bottom <= box.bottom + 1,
+        tapReaches: !!(hit && hit.closest && hit.closest('#tabBonus')),
+        docW: document.documentElement.scrollWidth, innerW: window.innerWidth
+      };
+    });
+    ok2(bo.docW <= bo.innerW, vp.w + '×' + vp.h + ': таб «Бонусы» не распирает страницу', [bo.docW, bo.innerW]);
+    ok2(bo.cards.length === 5 && bo.cards.every((c) => c.squash <= 1),
+      vp.w + '×' + vp.h + ': карточки «Бонусов» не сплющены — «Ва-банк» целен целиком', bo.cards);
+    if (bo.overflow > 0) {
+      ok2(bo.top.cls === true && bo.top.fade > .5, vp.w + '×' + vp.h +
+        ': за нижним краем ещё есть что смотреть — подсказка горит', bo.top);
+      ok2(bo.end.cls === false && bo.end.fade < .05, vp.w + '×' + vp.h +
+        ': прокрутили до дна — подсказка погасла', bo.end);
+      ok2(bo.lastShown, vp.w + '×' + vp.h + ': прокруткой открывается последняя карточка таба', bo.overflow);
+    }
+    ok2(bo.tapReaches, vp.w + '×' + vp.h + ': подложка-подсказка не перехватывает тап', null);
+    await shot('10-bonus-' + vp.w + 'x' + vp.h);
     await page.click('.tab[data-tab="shop"]');
   }
 

@@ -434,7 +434,7 @@
     stage: $('stage'), canvas: $('fx'), floats: $('floats'), coin: $('coin'),
     combo: $('combo'), comboX: $('comboX'),
     tabShop: $('tabShop'), tabBonus: $('tabBonus'), tabGuild: $('tabGuild'),
-    bonusDot: $('bonusDot'),
+    bonusDot: $('bonusDot'), panel: $('panel'),
     cardClick: $('cardClick'), clickEffect: $('clickEffect'), clickLevel: $('clickLevel'),
     buyClick: $('buyClick'), clickCost: $('clickCost'),
     cardAuto: $('cardAuto'), autoEffect: $('autoEffect'), autoLevel: $('autoLevel'),
@@ -2260,6 +2260,35 @@
     // Гильдия живёт асинхронными ответами VK: при входе перерисуем сразу, не
     // дожидаясь ближайшего тика, иначе игрок увидит состояние прошлого визита.
     if (id === 'guild') { renderGuild(); renderRaid(); }
+    // Скрытый таб метрик не имеет: подсказку «ниже ещё есть» пересчитываем уже
+    // после того, как новый таб стал видимым.
+    scheduleMoreHint();
+  }
+
+  /**
+   * Подсказка «ниже ещё есть».
+   *
+   * Панель обрезана max-height: 42vh, а контента в «Бонусах» и «Гильдии» больше
+   * неё — значит что-то гарантированно уехало за нижний край. Полоса скролла в
+   * 3px на тач-экране не видна, поэтому пока внизу осталось непросмотренное,
+   * на панели горит градиентный обрыв с шевроном (.panel.is-more в style.css).
+   *
+   * Порог 8px, а не 0: субпиксельные высоты и скругления иначе заставляли бы
+   * подсказку мигать на последних пикселях прокрутки.
+   */
+  function syncMoreHint() {
+    const node = el[TAB_BODIES[activeTab]];
+    if (!node || !el.panel) return;
+    el.panel.classList.toggle('is-more', node.scrollHeight - node.scrollTop - node.clientHeight > 8);
+  }
+
+  let moreHintRaf = 0;
+
+  /** Скролл, ресайз и перерисовка карточек сводятся в один кадр: метрики
+   *  осмысленны только после layout, а событий за жест бывает несколько. */
+  function scheduleMoreHint() {
+    if (moreHintRaf) return;
+    moreHintRaf = requestAnimationFrame(() => { moreHintRaf = 0; syncMoreHint(); });
   }
 
   /** Звук вкл/выкл (сохраняется в сейве). */
@@ -2339,6 +2368,24 @@
     document.querySelectorAll('.tab').forEach((b) => {
       b.addEventListener('click', () => switchTab(b.dataset.tab));
     });
+    // --- Подсказка «ниже ещё есть» (.panel.is-more). Источников три: сам
+    //     скролл таба, рост/падение окна и любая смена высоты карточек —
+    //     перерисовка заметок, приход буста, ответы VK по гильдии. Последнее
+    //     закрывает ResizeObserver, которого нет в старых WebView и в jsdom:
+    //     без него остаются scroll и resize, покрывающие жест игрока.
+    Object.keys(TAB_BODIES).forEach((k) => {
+      const node = el[TAB_BODIES[k]];
+      if (node) node.addEventListener('scroll', scheduleMoreHint, { passive: true });
+    });
+    window.addEventListener('resize', scheduleMoreHint, { passive: true });
+    if (typeof ResizeObserver === 'function') {
+      const moreRo = new ResizeObserver(scheduleMoreHint);
+      Object.keys(TAB_BODIES).forEach((k) => {
+        const node = el[TAB_BODIES[k]];
+        if (node) moreRo.observe(node);
+      });
+    }
+    scheduleMoreHint();
     el.modalCancel.addEventListener('click', closeModal);
     el.modal.addEventListener('click', (e) => { if (e.target === el.modal) closeModal(); });
     el.modalOk.addEventListener('click', () => {
