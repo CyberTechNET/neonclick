@@ -50,7 +50,12 @@ const ALLOWED = ['index.html', 'style.css', 'game.js', 'vk-integration.js', VEND
 const FOREIGN = ['package.json', 'package-lock.json', 'README.md', '.gitignore',
   '.vscode/settings.json', 'tools/vendor.json', 'tools/build-release.cjs',
   'tools/make-moderation-assets.cjs', 'assets/moderation/icon-512.png',
-  'assets/moderation/screen-neon.png',
+  'assets/moderation/icon-192.png', 'assets/moderation/screen-neon.png',
+  'assets/moderation/screen-meme.png', 'assets/moderation/screen-sat.png',
+  'assets/moderation/screen-bonus.png',
+  // Документы заявки перечислены явно, а не каталогом: статичный хостинг не отдаёт
+  // список каталога, поэтому 'assets/moderation/' одной строкой проверял бы ничего.
+  'assets/moderation/privacy-policy.md', 'assets/moderation/application.md',
   '.smoke-test.cjs', '.vk-mock-check.cjs', '.stress-check.cjs', '.visual-check.cjs',
   'base_smoke.txt', 'base_vk.txt', 'base_release.txt',
   'node_modules/jsdom/package.json', '_site/index.html', '.git/config'];
