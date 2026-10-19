@@ -52,7 +52,8 @@ const FOREIGN = ['package.json', 'package-lock.json', 'README.md', '.gitignore',
   'tools/make-moderation-assets.cjs', 'assets/moderation/icon-512.png',
   'assets/moderation/screen-neon.png',
   '.smoke-test.cjs', '.vk-mock-check.cjs', '.stress-check.cjs', '.visual-check.cjs',
-  'base_smoke.txt', 'base_vk.txt', 'node_modules/jsdom/package.json', '_site/index.html', '.git/config'];
+  'base_smoke.txt', 'base_vk.txt', 'base_release.txt',
+  'node_modules/jsdom/package.json', '_site/index.html', '.git/config'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log('  ' + a.join(' '));
