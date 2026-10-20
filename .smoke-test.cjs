@@ -934,7 +934,7 @@ function mockOutsideBridge() {
     for (let i = 0; i < perDay; i++) { P.playRisk(); await sleep(1100); }
     ok(P.risk().quota === 0, '10.4 лимит выбран досуха', P.risk());
     ok(P.risk().block === 'limit', '10.4 причина отказа — limit', P.risk().block);
-    ok(lim.d.getElementById('btnRisk').disabled, '10.4 кнопка «Играть» задизейблена');
+    ok(lim.d.getElementById('btnRisk').disabled, '10.4 кнопка «Поставить» задизейблена');
     ok(lim.d.getElementById('riskCard').classList.contains('is-blocked'), '10.4 карточка погасла, а не дразнится');
     const cb = Math.floor(P.state().coins);
     P.playRisk(); await sleep(1100);

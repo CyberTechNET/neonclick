@@ -18,6 +18,7 @@
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer-core');
+const { requireDevStand } = require('./tools/stand-guard.cjs');
 
 const EXE = ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'].find((p) => fs.existsSync(p));
@@ -25,7 +26,8 @@ const EXE = ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
    Если поднимаете другим способом (например, Live Server в VS Code на 5500) —
    задайте NEON_BASE, чтобы не переписывать код наборов:
        $env:NEON_BASE = 'http://127.0.0.1:5500'; node .vk-mock-check.cjs   */
-const BASE = (process.env.NEON_BASE || 'http://127.0.0.1:5173').replace(/\/+$/, '') + '/index.html';
+const ORIGIN = (process.env.NEON_BASE || 'http://127.0.0.1:5173').replace(/\/+$/, '');
+const BASE = ORIGIN + '/index.html';
 const SAVE_KEY = 'neonclick.save.v1';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -208,6 +210,10 @@ async function scenario(browser, scen, extraQ) {
 }
 
 (async () => {
+  /* Префлайт стенда. Набору нужны ИСХОДНИКИ с отладочными хуками window.NEON,
+     а не боевой артефакт. Без этого шага стенд, отдающий _site, выглядит как
+     регрессия игры: молчаливый 15-секундный таймаут на waitForFunction. */
+  await requireDevStand(ORIGIN, '.vk-mock-check.cjs').catch((e) => { console.error('\n\u274c ' + e.message + '\n'); process.exit(1); });
   const browser = await puppeteer.launch({ executablePath: EXE, headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   log('браузер:', EXE);
   /* ================= 1. УСПЕШНЫЙ ПОСМОТР → НАГРАДА ================= */
@@ -660,7 +666,7 @@ async function scenario(browser, scen, extraQ) {
        ограниченной высотой панели: при flex-shrink по умолчанию карточка
        уминалась до размера окна (78px при содержимом 161px на 390×844),
        scrollHeight контейнера становился равен clientHeight, скролл не
-       появлялся, а чипы доли, сумма ставки, кнопка «Играть» и предупреждение
+       появлялся, а чипы доли, сумма ставки, кнопка «Поставить» и предупреждение
        молча резались overflow:hidden. Признак здоровой вёрстки — высота рамки
        равна содержимому, и все узлы внутри этой рамки. */
     const fit = await r.page.$eval('#riskCard', (e) => {
@@ -681,7 +687,7 @@ async function scenario(browser, scen, extraQ) {
     ok(fit.content <= fit.box + 1,
       'карточка «Ва-банк» не сплющена: высота рамки равна её содержимому', fit);
     ok(fit.chips && fit.cta && fit.note,
-      'чипы доли, «Играть» и предупреждение лежат в рамке карточки, а не срезаны за ней', fit);
+      'чипы доли, «Поставить» и предупреждение лежат в рамке карточки, а не срезаны за ней', fit);
     ok(fit.inWindow,
       'вся карточка «Ва-банк» видна в окне таба без прокрутки (ставка — первый экран монетизации)', fit);
 
@@ -866,8 +872,8 @@ async function scenario(browser, scen, extraQ) {
     }
 
     // 9.7 — Запуск НЕ из сообщества: гильдии нет, но вкладка жива и рейд идёт.
-    //        Рoster пуст, поэтому выбирать не из чего: единственный источник
-    //        истины — vk_group_id из launch-параметров.
+    //        Одна запись в roster — выбирать не из чего (пикер скрыт), поэтому
+    //        единственный источник истины — vk_group_id из launch-параметров.
     const jn = await scenario(browser, 'guildmember');
     await waitProbe(jn.page);
     const gn = await gOf(jn.page);

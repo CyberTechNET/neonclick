@@ -24,18 +24,23 @@
  * Запуск:
  *   $env:NEON_BASE = 'https://cybertechnet.github.io/neonclick'; node .release-check.cjs
  * По умолчанию — локальный стенд собранного артефакта, чтобы прогон отлаживался
- * без сети:  python -m http.server 5173 --directory _site
+ * без сети:  python -m http.server 5174 --directory _site
  * ========================================================================== */
 'use strict';
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer-core');
+const { requireReleaseStand } = require('./tools/stand-guard.cjs');
 
 const EXE = ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'].find((p) => fs.existsSync(p));
 
-const ORIGIN = (process.env.NEON_BASE || 'http://127.0.0.1:5173').replace(/\/+$/, '');
+/* Стенд БОЕВОГО артефакта — порт 5174, а не 5173. Порт 5173 принадлежит
+   исходникам (.vk-mock/.visual/.stress), и раньше оба мира претендовали на
+   него: поднятый для релизной проверки стенд _site глушил стенд разработчика,
+   а три набора тонули в молчаливом таймауте (см. tools/stand-guard.cjs). */
+const ORIGIN = (process.env.NEON_BASE || 'http://127.0.0.1:5174').replace(/\/+$/, '');
 const URL0 = ORIGIN + '/index.html';
 const LOCAL = /^(https?:)?\/\/(127\.0\.0\.1|localhost|\[::1\])(:|$)/i.test(ORIGIN);
 const SAVE_KEY = 'neonclick.save.v1';
@@ -103,6 +108,10 @@ async function tap(page, n) {
 
 (async () => {
   if (!EXE) { log('\u274c Chromium/Edge не найден — прогон не выполнен'); process.exit(2); }
+  /* Префлайт: набор мерит публикацию, значит на адресе обязан лежать собранный
+     _site без отладочных хуков. Без стража стенд с исходниками заставил бы его
+     проверять сам себя — и молчать там, где он должен краснеть. */
+  await requireReleaseStand(ORIGIN, '.release-check.cjs').catch((e) => { console.error('\n\u274c ' + e.message + '\n'); process.exit(1); });
   const browser = await puppeteer.launch({
     executablePath: EXE,
     args: ['--no-sandbox', '--disable-dev-shm-usage']

@@ -1,0 +1,334 @@
+#!/usr/bin/env node
+/* ==========================================================================
+ * tools/check-copy.cjs — сверка текстов витрины (§4 досье) с кодом игры.
+ *
+ * Почему отдельный скрипт, а не глаза. Досье обещает кабинету конкретные
+ * числа: 3 раунда в сутки, ставка 25/50/100%, минимум 1000, 5/10/15 минут,
+ * +1000 и +500, крит ×5, ×2 на 5 минут. Каждое из них живёт в CFG игры, и
+ * изменение баланса молча делает описание неправдой — ровно тот класс лжи,
+ * за который заявку разворачивают уже после релиза.
+ *
+ * Вторая половина — длина. Кабинет режет поля по своему лимиту, а в досье
+ * каждая цифра подписана рядом с текстом. Подпись, которую никто не
+ * пересчитывает, устаревает в тот момент, когда кто-то поправил одну букву.
+ * Поэтому текст вытаскивается из блока цитаты, длина считается по кодовым
+ * точкам и сверяется с заявленной, а заявленная обязана влезать в бюджет поля.
+ *
+ * Это НЕ часть npm test: ничего не запускает, браузер не нужен, зависимостей
+ * нет (только node:fs/path). Живёт рядом с check-moderation-kit.cjs — оба
+ * отвечают на вопрос «можно ли отправлять бумаги», а не «работает ли игра».
+ *
+ * Запуск:
+ *   node tools/check-copy.cjs
+ *   npm run check:copy
+ * ========================================================================== */
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+
+const ROOT = path.join(__dirname, '..');
+const DOSSIER = path.join(ROOT, 'assets', 'moderation', 'application.md');
+
+let passed = 0, failed = 0;
+const log = (...a) => console.log('  ' + a.join(' '));
+const ok = (cond, name, extra) => {
+  if (cond) { passed++; log('\u2705 ' + name); }
+  else { failed++; log('\u274c ' + name + (extra !== undefined ? '  \u2192 ' + JSON.stringify(extra) : '')); }
+};
+
+const readText = (p) => fs.readFileSync(p, 'utf8');
+function grab(src, re, what) {
+  const m = re.exec(src);
+  if (!m) throw new Error('check-copy: не прочитано из кода: ' + what);
+  return m;
+}
+
+/* --------------------------------------------------------------------------
+ * Факты игры: описание витрины их пересказывает, значит обязано совпасть.
+ * ------------------------------------------------------------------------ */
+/** Список вида [a, b, c]; каждый член — произведение множителей («10 * 60000»). */
+const terms = (s) => s.replace(/^\[|\]$/g, '').split(',')
+  .map((t) => t.trim().split('*').reduce((a, b) => a * Number(b.trim()), 1));
+/** Одиночное значение вида «5 * 60 * 1000» — произведение всех множителей. */
+const product = (s) => s.trim().split('*').reduce((a, b) => a * Number(b.trim()), 1);
+
+/**
+ * Все числа, которые витрина пересказывает, из одной пары файлов.
+ * Вызывается дважды: по исходникам и по боевому артефакту _site/ — см. [6].
+ */
+function factsFrom(gameSrc, htmlSrc, where) {
+  const g = (re, what) => grab(gameSrc, re, where + ': ' + what);
+  const h = (re, what) => grab(htmlSrc, re, where + ': ' + what);
+  /* Комментарии в CFG поясняют человеку, но для парсера это мусор: строка
+     «stakes: [0.25, 0.5, 1], // доля баланса» без срезания коммента
+     распадается на шесть «членов списка» вместо трёх. */
+  const risk = g(/risk:\s*\{[\s\S]*?\n\s*\}/, 'CFG.risk')[0].replace(/\/\/[^\n]*/g, '');
+  const field = (key, what) => {
+    const m = new RegExp(key + ':\\s*(.+)$', 'm').exec(risk);
+    if (!m) throw new Error('check-copy: не прочитано из ' + where + ' CFG.risk: ' + what);
+    return m[1].trim().replace(/,$/, '').trim();
+  };
+  return {
+    logo: g(/logo:\s*'([^']+)'/, 'THAMES.neon.copy.logo')[1],
+    critMult: Number(g(/crit:\s*\{[^}]*mult:\s*(\d+)/, 'CFG.crit.mult')[1]),
+    boostMult: Number(g(/boost:\s*\{[^}]*mult:\s*(\d+)/, 'CFG.boost.mult')[1]),
+    boostMin: Math.round(product(g(/boost:\s*\{\s*ms:\s*([0-9*\s]+),/, 'CFG.boost.ms')[1]) / 60000),
+    adReward: Number(g(/freeCoinsReward:\s*(\d+)/, 'CFG.freeCoinsReward')[1]),
+    shareReward: Number(g(/share:\s*\{\s*reward:\s*(\d+)/, 'CFG.share.reward')[1]),
+    sharePerDay: Number(g(/share:\s*\{[^}]*perDay:\s*(\d+)/, 'CFG.share.perDay')[1]),
+    riskPerDay: Number(field('perDay', 'perDay')),
+    minStake: Number(field('minStake', 'minStake')),
+    stakes: terms(field('stakes', 'stakes')).map((x) => Math.round(x * 100)),
+    boostPrize: terms(field('boostMs', 'boostMs')).map((ms) => Math.round(ms / 60000)),
+    upClick: h(/card__title">(Сила клика)</, 'название апгрейда клика')[1],
+    upAuto: h(/card__title">(Авто-майнинг)</, 'название авто-майнинга')[1]
+  };
+}
+
+const CODE = factsFrom(
+  readText(path.join(ROOT, 'game.js')),
+  readText(path.join(ROOT, 'index.html')),
+  'исходники'
+);
+
+/* Русская морфология: описание пишет «силу клика», а UI — «Сила клика», поэтому
+   апгрейды сверяются по основам слов, а не по полной форме. Основа = слово без
+   двух последних букв, но не короче трёх букв: «Сила» → «Сил», «клика» → «клика». */
+const stems = (phrase) => phrase.toLowerCase().split(/[\s-]+/)
+  .map((w) => w.slice(0, Math.max(3, w.length - 2)));
+const hasUpgrade = (text, phrase) => stems(phrase).every((st) => text.toLowerCase().includes(st));
+
+
+/* --------------------------------------------------------------------------
+ * Разбор §4: блоки «Слоган / Краткое описание / Подробное описание».
+ * ------------------------------------------------------------------------ */
+const BUDGET = { 'Слоган': 60, 'Краткое описание': 250, 'Подробное описание': 1000 };
+const WORDS = { 1: 'одна', 2: 'две', 3: 'три', 4: 'четыре', 5: 'пять' };
+
+/** Текст блока цитаты: «> » снимается, пустая «> » разделяет абзацы. */
+function quoteText(lines) {
+  const paras = [];
+  let cur = [];
+  for (const raw of lines) {
+    const body = raw.replace(/^>\s?/, '').trim();
+    if (!body) { if (cur.length) { paras.push(cur.join(' ')); cur = []; } continue; }
+    cur.push(body);
+  }
+  if (cur.length) paras.push(cur.join(' '));
+  return paras.join('\n\n');
+}
+
+function parseDossier(md) {
+  const out = [];
+  let variant = null, field = null, declared = null, buf = null;
+  const flush = () => {
+    if (field && buf && buf.length) out.push({ variant, field, declared, text: quoteText(buf) });
+    field = null; buf = null;
+  };
+  for (const l of md.split(/\r?\n/)) {
+    const v = /^### 4\.\d+\.\s*Вариант\s+([АБ])/.exec(l);
+    if (v) { flush(); variant = v[1]; continue; }
+    const h = /^\*\*(Слоган|Краткое описание|Подробное описание)\*\*\s*\((\d+)\s*символ/i.exec(l);
+    if (h) { flush(); field = h[1]; declared = Number(h[2]); buf = []; continue; }
+    // Пустая строка между заголовком блока и цитатой блок не закрывает.
+    if (!l.trim()) continue;
+    if (buf !== null && /^>/.test(l)) { buf.push(l); continue; }
+    flush();
+  }
+  flush();
+  return out;
+}
+
+const md = readText(DOSSIER);
+const blocks = parseDossier(md);
+const at = (variant, field) => blocks.find((b) => b.variant === variant && b.field === field);
+
+/* Корни отрицаний, а не конкретные слова: «нельзя вывести», «не выводится»,
+   «без вывода» — все они про одно и то же обещание кабинету. */
+const CASH_OUT = /выв|налич|обмен/i;
+const BUY = /куп|покуп|приобрет/i;
+
+console.log('\n===== ТЕКСТЫ ВИТРИНЫ =====');
+
+/* CHECK_COPY_DEBUG=1 — вынуть разобранный текст, когда проверка падает не по
+   причине, а потому что парсер прочитал блок не целиком. */
+if (process.env.CHECK_COPY_DEBUG) {
+  for (const b of blocks) console.log('[debug]', b.variant + ' | ' + b.field + ' | ' + JSON.stringify(b.text));
+}
+
+console.log('\n[1] Состав §4 и длина каждого поля');
+ok(blocks.length === 6, 'в §4 ровно шесть блоков: 3 поля × 2 варианта',
+  blocks.map((b) => b.variant + ':' + b.field));
+for (const b of blocks) {
+  const n = [...b.text].length;
+  ok(n === b.declared, b.variant + ' / ' + b.field + ': заявлено ' + b.declared + ', по факту ' + n,
+    n === b.declared ? undefined : { declared: b.declared, actual: n });
+  ok(n <= BUDGET[b.field], b.variant + ' / ' + b.field + ': влезает в бюджет поля (' + n + ' \u2264 ' + BUDGET[b.field] + ')');
+  ok(!/[{}]{2,}/.test(b.text) && !/XX|\bTODO\b|\.\.\.$/.test(b.text),
+    b.variant + ' / ' + b.field + ': в тексте нет заглушек');
+}
+
+console.log('\n[2] Числа описания совпадают с CFG игры');
+/* Ядро — то, что обязан сказать любой вариант витрины. */
+const CLAIMS_CORE = [
+  ['крит', (t) => new RegExp('крит[а-яё]*\\s*\u00d7' + CODE.critMult).test(t), 'крит \u00d7' + CODE.critMult],
+  ['апгрейд клика', (t) => hasUpgrade(t, CODE.upClick), CODE.upClick],
+  ['авто-майнинг', (t) => hasUpgrade(t, CODE.upAuto), CODE.upAuto],
+  ['суточный лимит раундов', (t) => new RegExp(CODE.riskPerDay + ' раунда в сутки').test(t),
+    CODE.riskPerDay + ' раунда в сутки']
+];
+/* Полная раскрытость по риску — обязанность варианта А: категория «Азартные»
+   читает описание как декларацию механики, поэтому там каждое число обязано
+   быть названо и совпасть с CFG. Вариант Б таких чисел не обещает. */
+const CLAIMS_RISK = [
+  ['варианты ставки', (t) => t.includes(CODE.stakes.join('/') + '%'), CODE.stakes.join('/') + '%'],
+  ['минимальная ставка', (t) => new RegExp('минимум ' + CODE.minStake).test(t), 'минимум ' + CODE.minStake],
+  ['приз раунда', (t) => t.includes('(' + CODE.boostPrize.join('/') + ' минут)'),
+    '(' + CODE.boostPrize.join('/') + ' минут)'],
+  ['награда за ролик', (t) => t.includes('+' + CODE.adReward + ' монет'), '+' + CODE.adReward + ' монет'],
+  ['награда за репост', (t) => t.includes('+' + CODE.shareReward), '+' + CODE.shareReward],
+  ['репостов в сутки', (t) => t.includes((WORDS[CODE.sharePerDay] || CODE.sharePerDay) + ' в сутки'),
+    (WORDS[CODE.sharePerDay] || CODE.sharePerDay) + ' в сутки'],
+  ['буст за рекламу', (t) => t.includes('\u00d7' + CODE.boostMult + ' на ' + CODE.boostMin + ' минут'),
+    '\u00d7' + CODE.boostMult + ' на ' + CODE.boostMin + ' минут']
+];
+for (const variant of ['А', 'Б']) {
+  const full = at(variant, 'Подробное описание');
+  if (!full) { ok(false, 'вариант ' + variant + ': блок «Подробное описание» найден'); continue; }
+  const set = variant === 'А' ? CLAIMS_CORE.concat(CLAIMS_RISK) : CLAIMS_CORE;
+  for (const [name, test, needle] of set) {
+    ok(test(full.text), variant + ' / подробное: ' + name + ' названо как в коде (' + needle + ')');
+  }
+  ok(full.text.startsWith(CODE.logo), variant + ' / подробное: начинается с настоящего logo игры', CODE.logo);
+}
+
+console.log('\n[3] Обязанности варианта А (категория «Азартные»)','');
+{
+  const sl = at('А', 'Слоган'), sh = at('А', 'Краткое описание'), full = at('А', 'Подробное описание');
+  const RISKWORD = /ва-банк/i;
+  ok(sl && RISKWORD.test(sl.text), 'А / слоган: риск-раунд назван прямо — в «Азартных» прятать его нельзя');
+  ok(sh && RISKWORD.test(sh.text), 'А / краткое: риск-раунд назван прямо');
+  ok(full && RISKWORD.test(full.text), 'А / подробное: риск-раунд назван прямо');
+  ok(full && /матожидан/i.test(full.text), 'А / подробное: сказано про отрицательное матожидание');
+  ok(full && /сгорает/.test(full.text), 'А / подробное: сказано, что проигрыш сгорает');
+  ok(full && /на ранг не влияет|не влияет на ранг/.test(full.text),
+    'А / подробное: сказано, что раунд не двигает ранг');
+  ok(sh && /виртуальн/i.test(sh.text) && full && /виртуальн/i.test(full.text),
+    'А: валюта названа виртуальной и в кратком, и в подробном');
+  for (const b of [sh, full]) {
+    ok(b && BUY.test(b.text), 'А / ' + (b ? b.field : '?') + ': сказано, что покупок нет');
+    ok(b && CASH_OUT.test(b.text), 'А / ' + (b ? b.field : '?') + ': сказано, что вывода нет');
+  }
+}
+
+console.log('\n[3.1] Обязанности варианта Б (fallback на аркады)');
+{
+  const sh = at('Б', 'Краткое описание'), full = at('Б', 'Подробное описание');
+  ok(sh && /ва-банк/i.test(sh.text) && full && /ва-банк/i.test(full.text),
+    'Б: риск-раунд назван своим именем и там, и там — мягкость не отмена честности');
+  ok(sh && /виртуальн/i.test(sh.text) && full && /виртуальн/i.test(full.text),
+    'Б: валюта названа виртуальной и в кратком, и в подробном');
+  ok(full && BUY.test(full.text) && CASH_OUT.test(full.text),
+    'Б / подробное: сказано, что монеты не покупаются и не выводятся');
+}
+
+console.log('\n[4] Чего ни один текст обещать не может');
+{
+  const BANNED = /слот|рулетк|покер|джекпот|выигрыш\s+(деньг|рубл)|реальн\w*\s+(приз|выплат)|на деньги/i;
+  for (const b of blocks) {
+    const m = BANNED.exec(b.text);
+    ok(!m, b.variant + ' / ' + b.field + ': нет слотов, джекпота и обещаний выплаты деньгами', m && m[0]);
+    // «Казино» допустимо только в отрицании: «это не казино».
+    const bad = [...b.text.matchAll(/казино/gi)]
+      .filter((x) => !/не\s+казино/i.test(b.text.slice(Math.max(0, x.index - 6), x.index + 8)));
+    ok(bad.length === 0, b.variant + ' / ' + b.field + ': «казино» встречается только как отрицание', bad.length);
+  }
+  const ARCADE = /выигр|заработай|доход\s+в\s+рубл|приз\s+ден/i;
+  const slB = at('Б', 'Слоган');
+  ok(slB && !ARCADE.test(slB.text), 'Б / слоган: не обещает выигрыша — это аркадный вариант', slB && slB.text);
+}
+
+console.log('\n[5] Досье ссылается на эти блоки');
+for (const f of ['Слоган', 'Краткое описание', 'Подробное описание']) {
+  ok(md.includes('| ' + f + ' | \u0441\u043c. \u00a74, \u0431\u043b\u043e\u043a \u00ab' + f + '\u00bb'),
+    '§1: поле «' + f + '» указывает на одноимённый блок §4');
+}
+ok(md.includes('`54836005`'), '§1: ID приложения зафиксирован (54836005)');
+ok(md.includes('### 2.1'), '§2.1: решение по категории «Азартные» записано вместе с последствиями');
+
+console.log('\n[6] Числа сверены с боевым артефактом, а не только с исходниками');
+{
+  /* В кабинет уходит _site/, собранный tools/build-release.cjs, а не дерево
+     исходников. Если артефакт устарел, досье описывает игру, которой никто
+     не увидит: числа из game.js уже одни, а на витрине VK живёт другой билд.
+     Поэтому те же факты вытаскиваются второй раз — из _site/ — и сравниваются. */
+  const siteGame = path.join(ROOT, '_site', 'game.js');
+  const siteHtml = path.join(ROOT, '_site', 'index.html');
+  if (!fs.existsSync(siteGame) || !fs.existsSync(siteHtml)) {
+    log('\u23f3 _site/ не собран: сверка с артефактом пропущена (npm run build:release перед отправкой)');
+  } else {
+    const ART = factsFrom(readText(siteGame), readText(siteHtml), '_site');
+    const diff = Object.keys(CODE)
+      .filter((k) => JSON.stringify(CODE[k]) !== JSON.stringify(ART[k]))
+      .map((k) => k + ': ' + JSON.stringify(CODE[k]) + ' \u2192 ' + JSON.stringify(ART[k]));
+    ok(diff.length === 0, '_site/ несёт те же числа, что описывает досье', diff);
+  }
+}
+
+console.log('\n[7] Игра внутри себя обещает то же, что витрина');
+{
+  /* Группа [4] читает только §4 — она сторожит то, что модератор видит на витрине.
+     Но ва-банк и гильдия живут внутри игры, и подпись «Испытай удачу» приехала бы
+     туда молча, вместе с правкой разметки, без единого изменения §4. Поэтому те же
+     запреты применяются к исходной разметке, к CFG.guild.roster и к боевому
+     артефакту: досье обещает кабинет, а игрок читает игру. */
+  const GAME = readText(path.join(ROOT, 'game.js'));
+  const HTML = readText(path.join(ROOT, 'index.html'));
+  const PROMISE = /удач|испыт|джекпот|выигр|на деньги|разбогат|приз\s+(ден|руб)/i;
+  const label = (re, what) => {
+    const m = re.exec(HTML);
+    ok(!!m, what + ' имеет подпись в разметке', m && m[1]);
+    ok(m && !PROMISE.test(m[1]), what + ': называет действие, не обещает удачу и выигрыш', m && m[1]);
+    return m && m[1];
+  };
+  const cta = label(/id="riskCta">([^<]*)</, 'кнопка ва-банка');
+  label(/risk__sub">([^<]*)</, 'подзаголовок ва-банка');
+
+  const rosterSrc = (GAME.match(/guild:\s*\{[\s\S]*?\n\s*\}/) || [''])[0];
+  const roster = [...rosterSrc.matchAll(/\{\s*id:\s*(\d+)\s*,\s*name:\s*'([^']*)'\s*\}/g)];
+  ok(roster.length > 0, 'CFG.guild.roster опирается на настоящее сообщество', roster.length);
+  ok(roster.every((m) => Number(m[1]) > 0 && m[2].trim().length > 0),
+    'у каждой гильдии положительный id и непустое имя', roster.map((m) => m[0]));
+  const orphan = roster.filter((m) => !md.includes(m[1]));
+  ok(orphan.length === 0, 'каждый id гильдии назван в досье (§1)', orphan.map((m) => m[1]));
+
+  /* Ловушка №1 из vk-integration.js, перенесённая в бумаги: сообщество в ссылке
+     пишется с минусом, а рука копирует положительный vk_group_id. Проверяются обе
+     формы — правильная обязана быть, битой быть нельзя. */
+  const readme = readText(path.join(ROOT, 'README.md'));
+  const gid = roster.length ? roster[0][1] : null;
+  for (const [where, text] of [['досье', md], ['README п.3', readme]]) {
+    ok(!!gid && text.includes('app54836005_-' + gid),
+      where + ': ссылка запуска несёт минус перед id сообщества');
+    ok(!!gid && !text.includes('app54836005_' + gid),
+      where + ': битой ссылки без минуса в нём нет');
+  }
+
+  /* Артефакт обязан говорить то же, что исходники: старый «Играть» в _site/
+     уехал бы в кабинет незаметно для любой проверки по дереву репозитория. */
+  const siteHtml = path.join(ROOT, '_site', 'index.html');
+  if (!fs.existsSync(siteHtml)) {
+    log('\u23f3 _site/ не собран: сверка подписи кнопки с артефактом пропущена');
+  } else {
+    const siteCta = /id="riskCta">([^<]*)</.exec(readText(siteHtml));
+    ok(!!siteCta && siteCta[1] === cta, 'в _site/ кнопка ва-банка подписана тем же словом',
+      siteCta && siteCta[1]);
+  }
+}
+
+console.log('\n===== ТЕКСТЫ ВИТРИНЫ ' + passed + ' ok / ' + failed + ' fail =====');
+if (failed) {
+  console.log('Описание разошлось с кодом или с бюджетом поля. Править текст в §4, а не цифру в заголовке блока: цифру пересчитает этот же прогон.');
+}
+process.exit(failed ? 1 : 0);

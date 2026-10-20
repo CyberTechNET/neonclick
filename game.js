@@ -64,11 +64,15 @@
     //   Значит авторитетный реестр членов уже существует и проверяем из клиента
     //   (is_member), а вступление — один вызов моста.
     //   roster — статичный список сообществ-гильдий, переживает ребрендинг так же,
-    //   как темы: id сообщества не зависит от бренда игры. Пустой список означает,
-    //   что выбор гильдии закрыт, и интерфейс честно говорит «гильдии появятся»,
-    //   а не рисует мёртвые кнопки.
+    //   как темы: id сообщества не зависит от бренда игры. Заполняется ТОЛЬКО
+    //   настоящими id: выдуманная запись отправила бы игрока в чужое сообщество.
+    //   Одна запись — выбирать не из чего, пикер скрыт (renderGuild: length > 1),
+    //   и гильдия определяется запуском из папки сообщества (vk_group_id). Список
+    //   из двух и более записей оживляет пикер сам собой, без правок логики.
     guild: {
-      roster: []                    // [{ id: 123456789, name: 'Неон' }] — заполняется РЕАЛЬНЫМИ id сообществ
+      roster: [
+        { id: 242457640, name: 'NeonClick' }   // сообщество-обложка: vk.com/club242457640
+      ]
     },
 
     // ★ «БАТЛЫ» = ДЕТЕРМИНИРОВАННЫЙ НЕДЕЛЬНЫЙ РЕЙД (раздел 13d). Это НЕ точка
@@ -1569,7 +1573,7 @@
   }
 
   /**
-   * Игрок нажал «Играть». Порядок НЕ случаен: сначала списание, бросок и
+   * Игрок нажал «Поставить». Порядок НЕ случаен: сначала списание, бросок и
    * запись на диск, и только потом анимация. См. инвариант 2 выше.
    */
   function playRisk() {
@@ -1989,8 +1993,8 @@
     if (el.btnGuildLeave) el.btnGuildLeave.disabled = !canAct || st !== GSTATE.MEMBER;
     if (el.guildPicker) {
       el.guildPicker.disabled = guild.busy;
-      // Список пуст (id сообществ ещё не заведены) — выбор прячем, остаётся
-      // запуск из папки сообщества: источник истины тот же, VK.
+      // Одна гильдия — выбирать не из чего: выбор прячем, остаётся запуск из
+      // папки сообщества. Источник истины тот же, VK (vk_group_id).
       el.guildPicker.hidden = !(GUILD.roster && GUILD.roster.length > 1);
     }
     if (el.guildHint) {
@@ -2169,9 +2173,10 @@
   }
 
   /**
-   * Список гильдий из CFG.guild.roster. Пустой roster — норма на сегодня: реальные
-   * id сообществ ещё не заведены, и выдумывать их в конфиге нельзя (игрок попал бы
-   * в чужое сообщество). Тогда вкладка живёт запуском из папки VK.
+   * Список гильдий из CFG.guild.roster. Записи только настоящие: выдуманный id
+   * отправил бы игрока в чужое сообщество, а вступление в него отозвать уже нельзя.
+   * Одна гильдия — пикер не нужен, вкладка живёт запуском из папки VK (vk_group_id);
+   * с двумя и более игрок выбирает сам.
    * Опции строятся через createElement/textContent, а не innerHTML-строкой: имя
    * сообщества приходит из данных VK, а экранирования HTML в проекте нет —
    * DOM-API такой поверхности просто не создаёт.
@@ -3055,6 +3060,113 @@
         themeIssues: themeIssues,
         themeSchema: () => ({ fields: THEME_FIELDS, copy: THEME_COPY_KEYS })
       };
+
+      /* ---- ПЕРЕКЛЮЧАТЕЛЬ ТЕМ (только под ?debug=1) --------------------------
+         Кнопки вместо «выпиши ?theme=sat в адресной строке». Всё, что делает
+         виджет живым, — разметка, стили и поведение — лежит ВНУТРИ региона HOOK
+         и вырезается tools/build-release.cjs целиком: style.css намеренно НЕ
+         трогается, потому что билдер режет только game.js, и правила, написанные
+         там, уехали бы в боевой артефакт мёртвым грузом. Что в бою ни хука, ни
+         переключателя нет — .visual-check.cjs [12].
+
+         1. ВЫБОР ЖИВЁТ В URL, а не в хранилище и не в сейве. Второй ключ
+            LocalStorage — новая поверхность персональных данных: её обязан был
+            бы назвать privacy-policy.md, а check-moderation-kit держит
+            инвариант «к хранилищу игра обращается только через CFG.saveKey».
+            Поле в сейве — правка схемы v4: её задело бы слияние с «облаком»
+            другого устройства и проверки миграции в смоке. URL уже единственный
+            источник темы и читается синхронно до первого пейнта (THEME_FROM_URL)
+            — replaceState даёт перезагрузке ровно тот же покрытый тестами путь,
+            без вспышки прошлого бренда (инвариант №2).
+         2. ВИДЖЕТ НЕ ИМЕЕТ ПРАВА НАЕЗЖАТЬ НА ИГРУ. position:fixed у левой
+            границы, по вертикали — центр экрана: монета центрирована в сцене и
+            с полосой не пересекается ни на 390px, ни на 320px. Тап висит только
+            на el.coin, поэтому стоящий ВНЕ #stage элемент не может ни начислить
+            монеты, ни перехватить тап.
+         3. ТЕМА — ТОЛЬКО ВИТРИНА. pick() не пишет в S и не вызывает save():
+            переключение бренда не имеет права менять баланс и payload моста
+            (инвариант №1).
+         --------------------------------------------------------------------- */
+      (function mountThemeSwitch() {
+        const css = [
+          '.sw-theme{position:fixed;z-index:40;left:calc(6px + var(--sa-l));top:50%;',
+          'transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:6px;',
+          'padding:7px 6px;border-radius:16px;background:var(--glass);border:1px solid var(--line);',
+          'backdrop-filter:blur(8px);pointer-events:auto}',
+          '.sw-theme__t{font-size:9px;line-height:1;font-weight:600;letter-spacing:.08em;',
+          'color:var(--muted);text-transform:uppercase;user-select:none}',
+          '.sw-theme__b{width:34px;height:34px;padding:0;border-radius:50%;display:grid;place-items:center;',
+          'cursor:pointer;background:transparent;border:1px solid var(--line);color:var(--muted);',
+          'font-size:16px;line-height:1;transition:color .18s,border-color .18s,transform .12s}',
+          '.sw-theme__b:active{transform:scale(.92)}',
+          /* Подсветка активна ТОКЕНОМ темы: --cyan перекрашивает paintTokens(),
+             поэтому рассинхрон «кнопка прошлого бренда подсвечена» невозможен. */
+          '.sw-theme__b.is-on{color:var(--cyan);border-color:var(--cyan);box-shadow:0 0 12px rgba(0,229,255,.25)}'
+        ].join('');
+        const style = document.createElement('style');
+        style.textContent = css;
+        document.head.appendChild(style);
+
+        const box = document.createElement('div');
+        box.className = 'sw-theme';
+        box.setAttribute('role', 'group');
+        box.setAttribute('aria-label', 'Переключатель тем (только отладка)');
+        const cap = document.createElement('span');
+        cap.className = 'sw-theme__t';
+        cap.textContent = 'темы';
+        box.appendChild(cap);
+
+        /* Порядок кнопок = порядок реестра THEMES. data-sw-theme, а НЕ data-theme:
+           тот зарезервирован за <html> и читается обоими наборами проверок как
+           признак применённой темы. */
+        const btns = Object.keys(THEMES).map((id) => {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'sw-theme__b';
+          b.setAttribute('data-sw-theme', id);
+          b.textContent = THEMES[id].glyph;
+          b.title = id + ' — ' + THEMES[id].copy.logo;
+          b.addEventListener('click', () => pick(id));
+          box.appendChild(b);
+          return b;
+        });
+        document.body.appendChild(box);
+        mark();
+
+        function mark() {
+          btns.forEach((b) => b.classList.toggle('is-on', b.getAttribute('data-sw-theme') === activeTheme));
+        }
+
+        function remember(id) {
+          try {
+            const q = new URLSearchParams(location.search);
+            q.set('theme', id);                 // debug=1 и прочие поля сохраняются
+            history.replaceState(null, '',
+              location.pathname + '?' + q.toString() + location.hash);
+          } catch (_) {
+            /* file:// и жёсткие песочницы: тема уже применена, запоминание —
+               удобство, а не обязанность. Но не молча: см. ловушку 3. */
+            console.warn('[theme] не удалось записать ?theme= в URL — выбор живёт до перезагрузки');
+          }
+        }
+        function pick(id) {
+          /* Единственный код-путь с харнесом: NEON.setTheme делает applyTheme,
+             сброс кэша подписи репоста и render(). Дублировать эту тройку здесь
+             — значит получить разъезд поведения между тестами и руками. */
+          const applied = window.NEON.setTheme(id);
+          mark();
+          if (!applied) {
+            // Неизвестная тема: applyTheme уже остался на реальной, подсветку
+            // вернули mark(). Молча нельзя — иначе опечатка в реестре выглядит
+            // как «кнопка не работает».
+            toast('Тема «' + id + '» не найдена — осталось «' + activeTheme + '»', 'bad', 2400);
+            return;
+          }
+          remember(id);
+          toast('Тема: ' + id + ' — ' + TM().copy.logo, 'good', 2200);
+        }
+
+      })();
     }
     // <<< RELEASE-STRIP HOOK_END
   }

@@ -21,13 +21,15 @@
 const fs = require('fs');
 const path = require('path');
 const puppeteer = require('puppeteer-core');
+const { requireDevStand } = require('./tools/stand-guard.cjs');
 
 const BROWSERS = [
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 ];
 /* Адрес стенда: см. .vk-mock-check.cjs — переопределяется через NEON_BASE. */
-const BASE = (process.env.NEON_BASE || 'http://127.0.0.1:5173').replace(/\/+$/, '') + '/index.html';
+const ORIGIN = (process.env.NEON_BASE || 'http://127.0.0.1:5173').replace(/\/+$/, '');
+const BASE = ORIGIN + '/index.html';
 const SAVE_KEY = 'neonclick.save.v1';
 const CLOUD_KEY = 'neonclick1';
 
@@ -127,6 +129,9 @@ const saveRaw = (page) => page.evaluate((k) => localStorage.getItem(k) || '', SA
 (async () => {
   const exe = BROWSERS.find((p) => fs.existsSync(p));
   if (!exe) { console.log('Браузер не найден — набор пропущен'); process.exit(0); }
+  /* Префлайт стенда: облачные сценарии проверяются через window.NEON, поэтому
+     здесь нужны исходники, а не собранный _site (см. tools/stand-guard.cjs). */
+  await requireDevStand(ORIGIN, '.stress-check.cjs').catch((e) => { console.error('\n\u274c ' + e.message + '\n'); process.exit(1); });
   log('браузер:', exe);
   const browser = await puppeteer.launch({
     executablePath: exe,

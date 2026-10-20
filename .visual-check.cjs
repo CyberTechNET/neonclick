@@ -7,6 +7,7 @@
 const path = require('path');
 const fs = require('fs');
 const puppeteer = require('puppeteer-core');
+const { requireDevStand } = require('./tools/stand-guard.cjs');
 
 const BROWSERS = [
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
@@ -15,7 +16,8 @@ const BROWSERS = [
 const OUT = process.argv[2] || path.join(require('os').tmpdir(), 'neon-shots');
 /* Адрес стенда: по умолчанию 5173, переопределяется через NEON_BASE
    (например, Live Server в VS Code поднимает сайт на 5500). */
-const URL = (process.env.NEON_BASE || 'http://127.0.0.1:5173').replace(/\/+$/, '') + '/index.html?debug=1';
+const ORIGIN = (process.env.NEON_BASE || 'http://127.0.0.1:5173').replace(/\/+$/, '');
+const URL = ORIGIN + '/index.html?debug=1';
 fs.mkdirSync(OUT, { recursive: true });
 
 const exe = BROWSERS.find((p) => fs.existsSync(p));
@@ -43,6 +45,9 @@ function withDemo(src) {
 }
 
 (async () => {
+  /* Префлайт стенда: разделы тыкают в живую игру через window.NEON, поэтому
+     здесь нужны исходники, а не собранный _site (см. tools/stand-guard.cjs). */
+  await requireDevStand(ORIGIN, '.visual-check.cjs').catch((e) => { console.error('\n\u274c ' + e.message + '\n'); process.exit(1); });
   const browser = await puppeteer.launch({
     executablePath: exe,
     headless: true,
@@ -364,7 +369,7 @@ function withDemo(src) {
        Здесь «Ва-банк» (163px) соседствует с тремя рекламными рядами, и весь этот
        стек не влезает в панель, обрезанную max-height: 42vh. Значит важны два
        независимых факта: карточки не умяты изнутри (иначе игрок не видит чипы
-       доли, сумму ставки и кнопку «Играть») и всё, что уехало за край, реально
+       доли, сумму ставки и кнопку «Поставить») и всё, что уехало за край, реально
        достижимо прокруткой. Пока ниже есть непросмотренное, на панели горит
        подложка с шевроном (.is-more); на дне она обязана погаснуть. */
     await page.click('.tab[data-tab="bonus"]');
@@ -515,6 +520,87 @@ function withDemo(src) {
   await page.goto(URL, { waitUntil: 'networkidle2' });   // возврат к дефолтному бренду
   await page.waitForFunction(() => !!window.NEON, { timeout: 15000 });
 
+  /* --- 11b. ПЕРЕКЛЮЧАТЕЛЬ ТЕМ (живёт только под ?debug=1) ---------------------
+     Руками бренд раньше менялся лишь через адресную строку. У виджета есть три
+     обязанности, которых у ?theme= нет, и каждая — про молчаливую поломку:
+     (а) соответствовать реестру THEMES — иначе добавленная четвёртая тема
+         выйдет без кнопки, и переключатель станет врущим;
+     (б) запоминать выбор URL'ем, а НЕ хранилищем и НЕ сейвом: второй ключ
+         LocalStorage — новая поверхность персональных данных (её обязан бы
+         назвать privacy-policy.md, а check-moderation-kit держит инвариант
+         «к хранилищу — только через CFG.saveKey»), а поле в сейве — правка
+         схемы v4, которую задело бы слияние с «облаком»;
+     (в) не мешать игре: не наезжать на монету и не распускать страницу. */
+  {
+    const snap = () => page.evaluate(() => {
+      const b = [].slice.call(document.querySelectorAll('.sw-theme__b'));
+      const cs = getComputedStyle(document.documentElement);
+      const coin = document.getElementById('coin').getBoundingClientRect();
+      const top = document.elementFromPoint(coin.x + coin.width / 2, coin.y + coin.height / 2);
+      const bx = (document.querySelector('.sw-theme') || { getBoundingClientRect: () => ({ right: 0, bottom: 0 }) }).getBoundingClientRect();
+      const on = document.querySelector('.sw-theme__b.is-on');
+      return {
+        reg: window.NEON.themes(),
+        ids: b.map((x) => x.getAttribute('data-sw-theme')),
+        glyphOk: b.every((x) => x.textContent === window.NEON.themeOf(x.getAttribute('data-sw-theme')).glyph),
+        on: on ? on.getAttribute('data-sw-theme') : null,
+        html: document.documentElement.getAttribute('data-theme'),
+        title: document.title,
+        logo: document.getElementById('logoTxt').textContent,
+        cap: document.getElementById('balCap').textContent,
+        cyan: cs.getPropertyValue('--cyan').trim(),
+        search: location.search,
+        keys: Object.keys(localStorage).sort(),
+        widgets: document.querySelectorAll('.sw-theme').length,
+        overflowX: document.documentElement.scrollWidth <= window.innerWidth + 1,
+        fits: bx.right <= window.innerWidth + 1 && bx.bottom <= window.innerHeight + 1,
+        reachable: !!top && !!top.closest('#coin')
+      };
+    });
+
+    const s0 = await snap();
+    ok2(s0.ids.join() === s0.reg.join() && s0.glyphOk,
+      'переключатель = весь реестр THEMES, кнопка без глифа темы не выезжает', [s0.ids, s0.reg]);
+    ok2(s0.on === 'neon' && s0.html === 'neon', 'подсветка на старте совпадает с применённой темой', [s0.on, s0.html]);
+
+    const target = s0.reg[s0.reg.length - 1];               // последняя тема реестра, не литерал
+    await page.click('.sw-theme__b[data-sw-theme="' + target + '"]');
+    await sleep(300);
+    const s1 = await snap();
+    /* Бренд живёт в copy (см. THEMES в game.js), а themeOf возвращает СЫРУЮ
+       запись реестра — не уплощённый взгляд theme(). Проецируем явно:
+       t.copy.logo, а не t.logo. Иначе проверка сравнивает с undefined и
+       краснеет ровно тогда, когда виджет отработал правильно. */
+    const th = await page.evaluate((x) => {
+      const t = window.NEON.themeOf(x);
+      return { cur: t.cur, glyph: t.glyph, accent: t.accent, logo: t.copy.logo };
+    }, target);
+    ok2(s1.html === target && s1.on === target, 'тап по кнопке применил тему и передвинул подсветку', [s1.html, s1.on]);
+    ok2(s1.title === th.logo && s1.logo === th.logo && s1.cap === th.cur,
+      'тап по кнопке перекрасил имя продукта и валюту, а не только палитру', [s1.title, s1.logo, s1.cap]);
+    ok2(s1.cyan.toLowerCase() === th.accent.toLowerCase(), 'тап по кнопке довел акцент до CSS-переменной', s1.cyan);
+    ok2(s1.keys.join() === s0.keys.join(),
+      'выбор темы НЕ завёл ни одного нового ключа хранилища (поверхность ПД не выросла)', [s0.keys, s1.keys]);
+    ok2(s1.search.indexOf('theme=' + target) > -1, 'выбор записан в URL — перезагрузка обязана его вернуть', s1.search);
+    ok2(s1.search.indexOf('debug') > -1, 'запись темы в URL не съела debug=1 (иначе виджет умрёт на перезагрузке)', s1.search);
+    ok2(s1.widgets === 1 && s1.overflowX && s1.fits, 'виджет единственный, без горизонтального скролла и в границах экрана', s1);
+    ok2(s1.reachable, 'виджет не перекрыл монету: тап по центру по-прежнему доходит до #coin', s1.reachable);
+    await shot('11b-theme-switched-' + target);
+
+    await page.reload({ waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => !!window.NEON, { timeout: 15000 });
+    const s2 = await snap();
+    ok2(s2.html === target && s2.on === target && s2.widgets === 1,
+      'перезагрузка вернула выбранную тему тем же синхронным путём (?theme=), без вспышки прошлого бренда', [s2.html, s2.on]);
+
+    await page.click('.sw-theme__b[data-sw-theme="' + s0.reg[0] + '"]');
+    await sleep(250);
+    const s3 = await snap();
+    ok2(s3.html === s0.reg[0] && s3.on === s0.reg[0], 'переключатель возвращается на базовый бренд (витрина не залипает)', [s3.html, s3.on]);
+    await page.goto(URL, { waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => !!window.NEON, { timeout: 15000 });
+  }
+
   /* --- 12. БОЕВОЙ ПУТЬ: запуск БЕЗ ?debug=1 --------------------------------
      Все секции выше едут на URL с ?debug=1, потому что без него нет хука
      window.NEON, которым проверяется игра. Побочный эффект: РЕАЛЬНЫЙ адрес
@@ -523,7 +609,7 @@ function withDemo(src) {
      входов. Вторым числом фиксируем, что NEON в бою НЕ создаётся — иначе любой
      игрок рисовал бы монеты из консоли (см. раздел 17, хук только под debug). */
   {
-    const LIVE = (process.env.NEON_BASE || 'http://127.0.0.1:5173').replace(/\/+$/, '') + '/index.html';
+    const LIVE = ORIGIN + '/index.html';
     const lctx = await browser.createBrowserContext();
     const lp = await lctx.newPage();
     lp.on('pageerror', (e) => problems.push('battle pageerror: ' + e.message));
@@ -540,6 +626,7 @@ function withDemo(src) {
       await sleep(1400);                                  // пережить такт автосейва (1000 мс)
       const lv = await lp.evaluate(() => ({
         hook: typeof window.NEON,
+        sw: document.querySelectorAll('.sw-theme, .sw-theme__b').length,
         bal: parseInt((document.getElementById('balance').textContent || '0').replace(/\D/g, ''), 10),
         cap: document.getElementById('balCap').textContent,
         saved: !!localStorage.getItem('neonclick.save.v1'),
@@ -548,6 +635,11 @@ function withDemo(src) {
       }));
       log('battle "' + (q || 'дефолт') + '":', JSON.stringify(lv));
       ok2(lv.hook === 'undefined', 'бой' + (q ? ' ' + q.replace('&', ' ') : '') + ': отладочный хук NEON не создан (монету из консоли не нарисовать)', lv.hook);
+      /* Переключатель тем объявлен в том же регионе HOOK, что и хук, поэтому
+         «хука нет» ещё не значит «виджета нет»: его отсутствие проверяем
+         отдельным фактом, а не следствием. Иначе в витрине модерации осталась бы
+         кнопка, меняющая имя продукта на другой бренд. */
+      ok2(lv.sw === 0, 'бой' + (q ? ' ' + q.replace('&', ' ') : '') + ': переключателя тем в боевом артефакте нет', lv.sw);
       ok2(lv.bal > 0, 'бой' + (q ? ' ' + q.replace('&', ' ') : '') + ': настоящая мышь накликивает монеты', lv.bal);
       ok2(lv.saved && lv.keys === 1, 'бой: сейв лёг в единственный ключ LocalStorage', [lv.saved, lv.keys]);
       ok2(lv.fits, 'бой' + (q ? ' ' + q.replace('&', ' ') : '') + ': страница не расползлась по горизонтали', lv.fits);
