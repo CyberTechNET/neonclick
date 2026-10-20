@@ -9,6 +9,7 @@
     "assets:moderation": "node tools/make-moderation-assets.cjs",
     "check:kit": "node tools/check-moderation-kit.cjs",
     "check:copy": "node tools/check-copy.cjs",
+    "check:negctl": "node tools/negctl-copy.cjs",
     "serve:release": "python -m http.server 5174 --directory _site",
     "test:smoke": "node .smoke-test.cjs",
     "test:vk": "node .vk-mock-check.cjs",
