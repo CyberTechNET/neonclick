@@ -890,6 +890,14 @@ async function scenario(browser, scen, extraQ) {
       'пустой roster не показывается');
     ok(flat(await jn.page.$eval('#guildHint', (e) => e.textContent)).indexOf(flat('папки сообщества')) > -1,
       'подсказка объясняет, как попасть в гильдию', await jn.page.$eval('#guildHint', (e) => e.textContent));
+    /* Мост есть, гильдии нет — значит причина НЕ «нет подключения к VK», а
+       отсутствие привязки приложения к сообществу. Подписи обязаны различаться:
+       сваленные в одну, они отправляют админа чинить не то (так и вышло на
+       реальном кабинете: приложение, отлично подключённое к VK, писало
+       «нет подключения к ВК»). */
+    const tagN = flat(await jn.page.$eval('#guildTag', (e) => e.textContent));
+    ok(tagN.indexOf(flat('запуск не из сообщества')) > -1 && tagN.indexOf(flat('нет подключения')) === -1,
+      'в VK без vk_group_id вкладка винит привязку, а не подключение к VK', tagN);
     ok((await methods(jn.page)).filter((x) => /GetGroupInfo/.test(x)).length === 0,
       'без id сообщества в мост не ходим: запрос о «гильдии #0» бессмысленен',
       (await methods(jn.page)).filter((x) => /Group/.test(x)));
@@ -939,6 +947,9 @@ async function scenario(browser, scen, extraQ) {
     ok(l1 === U_APP, '10.1 ссылка для репоста собрана по vk_app_id', l1);
     const g1 = await r1.pg.evaluate(() => window.NEON.guild());
     ok(g1.gid === 0, '10.1 без vk_group_id гильдия не выдумывается', g1);
+    ok(flat(await r1.pg.$eval('#guildTag', (e) => e.textContent)).indexOf(flat('запуск не из сообщества')) > -1,
+      '10.1 личный боевой запуск: VK на месте, поэтому виновата привязка, а не подключение',
+      await r1.pg.$eval('#guildTag', (e) => e.textContent));
     ok((await methods(r1.pg))[0] === 'VKWebAppInit', '10.1 первым ушёл обязательный VKWebAppInit',
       (await methods(r1.pg)).slice(0, 3));
 
@@ -1026,6 +1037,9 @@ async function scenario(browser, scen, extraQ) {
         '10.6 не приняли за VK: ' + why, s6);
       const adN = (await methods(n.pg)).filter((x) => /NativeAds$/.test(x)).length;
       ok(adN === 0, '10.6 вне VK рекламу не зовём (' + why + ')', adN);
+      ok(flat(await n.pg.$eval('#guildTag', (e) => e.textContent)).indexOf(flat('нет подключения к VK')) > -1,
+        '10.6 вне VK вкладка говорит именно про подключение (' + why + ')',
+        await n.pg.$eval('#guildTag', (e) => e.textContent));
       await n.pg.close();
     }
   }
