@@ -123,6 +123,13 @@ const GUARDS = [
     cut: /21\.10\.2026 такая карточка появилась[\s\S]*?а не после смены\s+карточки\./,
     rule: (t) => t.includes('в «не готово», но не в «закрыто»'),
   },
+  {
+    name: 'README п.2: URL публикации отделён от ссылки запуска',
+    file: 'README.md',
+    cut: /В поля идёт[\s\S]*?ответил server error\./,
+    rule: (t) => t.includes('https://cybertechnet.github.io/neonclick/index.html') &&
+      t.includes('адрес игрока'),
+  },
 
 ];
 
