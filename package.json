@@ -2,7 +2,7 @@
   "name": "neon-clicker-dev",
   "version": "0.0.0",
   "private": true,
-  "description": "Dev-only manifest for the five regression harnesses (.smoke-test / .vk-mock-check / .visual-check / .stress-check / .release-check). NOT part of the VK Mini App release. The release is assembled by tools/build-release.cjs into _site/ from exactly five files: index.html, style.css, game.js, vk-integration.js and the vendored vk-bridge (tools/vendor.json). Nothing here is loaded by the app.",
+  "description": "Dev-only manifest for the five regression harnesses (.smoke-test / .vk-mock-check / .visual-check / .stress-check / .release-check). NOT part of the VK Mini App release. The release is assembled by tools/build-release.cjs into _site/ from exactly six files: index.html, style.css, game.js, vk-integration.js, the vendored vk-bridge (tools/vendor.json) and privacy.html — the public privacy policy rendered from assets/moderation/privacy-policy.md. Nothing here is loaded by the app.",
   "license": "UNLICENSED",
   "scripts": {
     "build:release": "node tools/build-release.cjs",
@@ -10,6 +10,7 @@
     "check:kit": "node tools/check-moderation-kit.cjs",
     "check:copy": "node tools/check-copy.cjs",
     "check:negctl": "node tools/negctl-copy.cjs",
+    "check:negctl:policy": "node tools/negctl-policy.cjs",
     "serve:release": "python -m http.server 5174 --directory _site",
     "test:smoke": "node .smoke-test.cjs",
     "test:vk": "node .vk-mock-check.cjs",

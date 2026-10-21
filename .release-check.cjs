@@ -16,7 +16,7 @@
  *   2) загрузку SDK VK Bridge без предподставленного мока: единственный способ
  *      убедиться, что вендоренный vk-bridge.<версия>.js доехал, завёл
  *      window.vkBridge и что цепочка НЕ свалилась в CDN-фолбэк;
- *   3) состав хостинга: пять файлов артефакта и ничего больше — ни package.json,
+ *   3) состав хостинга: шесть файлов артефакта и ничего больше — ни package.json,
  *      ни наборов проверок, ни .git;
  *   4) что ?debug=1 на боевом URL не даёт ни хука, ни отключения античита, а
  *      ручная правка LocalStorage не доживает до баланса.
@@ -45,16 +45,18 @@ const URL0 = ORIGIN + '/index.html';
 const LOCAL = /^(https?:)?\/\/(127\.0\.0\.1|localhost|\[::1\])(:|$)/i.test(ORIGIN);
 const SAVE_KEY = 'neonclick.save.v1';
 const VENDOR = JSON.parse(fs.readFileSync(path.join(__dirname, 'tools', 'vendor.json'), 'utf8'));
-const ALLOWED = ['index.html', 'style.css', 'game.js', 'vk-integration.js', VENDOR.file];
+const ALLOWED = ['index.html', 'style.css', 'game.js', 'vk-integration.js', VENDOR.file, 'privacy.html'];
 
 /** Что на боевом хостинге обязано ОТСУТСТВОВАТЬ (любой ответ, кроме 200).
- *  assets/moderation/* — материалы заявки в кабинет VK (иконка, скриншоты):
- *  они живут в дереве репозитория и наружу смотреть не должны, сборщик берёт
- *  только allowlist из пяти файлов. Проверяется здесь, по сети, а не по тексту
- *  сборщика: «не уехало» — утверждение про хостинг, а не про регэксп. */
+ *  assets/moderation/* — материалы заявки в кабинет VK (иконка, скриншоты, исходники
+ *  документов): они живут в дереве репозитория и наружу смотреть не должны, сборщик
+ *  берёт только allowlist из шести файлов. Единственное исключение из дерева
+ *  модерации — публичная страница политики, и то не как файл: она отрендерена в
+ *  privacy.html, а исходный .md остаётся чужим путём. Проверяется здесь, по сети,
+ *  а не по тексту сборщика: «не уехало» — утверждение про хостинг, а не про регэксп. */
 const FOREIGN = ['package.json', 'package-lock.json', 'README.md', '.gitignore',
   '.vscode/settings.json', 'tools/vendor.json', 'tools/build-release.cjs',
-  'tools/make-moderation-assets.cjs', 'assets/moderation/icon-512.png',
+  'tools/make-moderation-assets.cjs', 'tools/negctl-policy.cjs', 'assets/moderation/icon-512.png',
   'assets/moderation/icon-192.png', 'assets/moderation/screen-neon.png',
   'assets/moderation/screen-meme.png', 'assets/moderation/screen-sat.png',
   'assets/moderation/screen-bonus.png',
@@ -236,6 +238,33 @@ async function tap(page, n) {
       if (st === 200) leaks.push(p + ' -> 200');
     }
     ok(leaks.length === 0, 'чужих файлов на хостинге нет (наборы проверок, package.json, .git — недоступны)', leaks);
+
+    /* Публичная страница политики. Кабинет VK открывает её обычным браузером, а не
+     * нашим WebView, поэтому проверяется то, что видит модератор: что это документ,
+     * что в нём все разделы и что из репозитория вместе с ним не уехала внутренняя
+     * кухня. Число разделов зафиксировано здесь буквально и совпадает с перечнем
+     * check-moderation-kit намеренно: это два независимых свидетеля одного
+     * публичного обещания, и добавка раздела в политике обязана быть решением,
+     * а не побочным эффектом правки markdown. */
+    const polRes = await fetch(ORIGIN + '/privacy.html', { cache: 'no-store', redirect: 'follow' });
+    const polText = polRes.status === 200 ? Buffer.from(await polRes.arrayBuffer()).toString('utf8') : '';
+    ok(polRes.status === 200, 'privacy.html читается целиком (не обрыв и не редирект в никуда)', polRes.status);
+    ok(/^<!DOCTYPE html>/i.test(polText.trim()), 'privacy.html — HTML-документ, а не 404-страничка и не сырой markdown', polText.slice(0, 60));
+    ok(polText.includes('<meta charset="utf-8">') && /<html lang="ru">/.test(polText),
+      'privacy.html объявлена как ru/utf-8: кабинет открывает её чужим браузером');
+    const h2Count = (polText.match(/<h2>/g) || []).length;
+    ok(h2Count === 9, 'privacy.html несёт все девять разделов политики', h2Count);
+    ok(polText.includes('Чего мы НЕ собираем') && polText.includes('Что может сделать игрок'),
+      'privacy.html несёт разделы, на которые смотрит модератор в первую очередь');
+    ok(!polText.includes('<!--'), 'в публичной политике нет HTML-комментариев репозитория');
+    const polLeaks = ['check-moderation-kit', 'make-moderation-assets', 'build-release', 'release-check',
+      'tools/', 'assets/moderation', 'node_modules', 'RELEASE-STRIP', 'window.NEON'].filter((n) => polText.includes(n));
+    ok(polLeaks.length === 0, 'в публичной политике нет путей внутренней кухни', polLeaks);
+    const polMarkers = polText.match(/\{\{[^}]{2,40}\}\}/g) || [];
+    if (polMarkers.length) {
+      log('⚠ в публичной политике ' + polMarkers.length + ' незакрытых маркеров: ' +
+        [...new Set(polMarkers)].join(', ') + ' — их держит как ожидание npm run check:kit');
+    }
 
     /* ==================================================================== */
     log('\n[7] Вёрстка и чистота консоли на реальном хостинге');

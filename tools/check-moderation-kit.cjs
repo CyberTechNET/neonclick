@@ -17,7 +17,7 @@
  * состояние «ждёт человека» в отправку не выпускает.
  *
  * Негативный контроль. Сверки имели бы смысл только если они краснеют на битых
- * данных, поэтому NEON_KIT_DISTORT=keys|methods|domain|reset|foreign|geom|limit
+ * данных, поэтому NEON_KIT_DISTORT=keys|methods|domain|reset|foreign|pub|geom|limit
  * портит копию в памяти (файлы не трогаются) — и прогон обязан упасть. Штатный
  * запуск переменную не задаёт.
  *
@@ -34,7 +34,7 @@ const crypto = require('crypto');
 const ROOT = path.join(__dirname, '..');
 const KIT = path.join(ROOT, 'assets', 'moderation');
 
-const DISTORTIONS = ['keys', 'methods', 'domain', 'reset', 'foreign', 'geom', 'limit'];
+const DISTORTIONS = ['keys', 'methods', 'domain', 'reset', 'foreign', 'pub', 'geom', 'limit'];
 const DISTORT = String(process.env.NEON_KIT_DISTORT || '').toLowerCase();
 if (DISTORT && !DISTORTIONS.includes(DISTORT)) {
   console.error('NEON_KIT_DISTORT должен быть одним из: ' + DISTORTIONS.join(', '));
@@ -151,6 +151,11 @@ if (DISTORT === 'reset') code.cloudOnReset = false;
 if (DISTORT === 'limit') code.sharePerDay = 4;
 if (DISTORT === 'geom') geomOverride = { w: 512, h: 511 };
 if (DISTORT === 'foreign') releaseTxt = releaseTxt.replace(/'assets\/moderation\/privacy-policy\.md',?\s*/, '');
+// 'pub' портит противоположный край того же инварианта: публичная страница политики
+// перестала быть обязательной на хостинге. Обе порчи бьют по .release-check.cjs, но
+// по разным его спискам, и каждая обязана краснить свою проверку — иначе одна из них
+// декоративна.
+if (DISTORT === 'pub') releaseTxt = releaseTxt.replace(/, 'privacy\.html'\]/, ']');
 if (DISTORT) log('!\tнегативный контроль включён: NEON_KIT_DISTORT=' + DISTORT);
 
 // Переносы в прозе рвут фразы пополам («700\nобращений в час»), поэтому все сверки
@@ -315,21 +320,54 @@ console.log('\n[6] Досье против кода: признаки катег
     'досье требует живой скриншот гильдии, а не подделку');
 }
 
-console.log('\n[7] Комплект не ездит наружу');
+console.log('\n[7] Комплект не ездит наружу — кроме одной страницы');
 {
-  ok(releaseTxt.includes("'assets/moderation/privacy-policy.md'"), '.release-check.cjs держит политику в чужих путях');
+  ok(releaseTxt.includes("'assets/moderation/privacy-policy.md'"), '.release-check.cjs держит исходник политики в чужих путях');
   ok(releaseTxt.includes("'assets/moderation/application.md'"), '.release-check.cjs держит досье в чужих путях');
-  ok(!/moderation/.test(builderTxt), 'сборщик артефакта про папку модерации не знает (в _site её быть не может)');
+  ok(/const ALLOWED = \[[^\]]*'privacy\.html'[^\]]*\]/.test(releaseTxt),
+    '.release-check.cjs требует privacy.html на хостинге: она в allowlist, а не в FOREIGN');
+  /* Инвариант «наружу смотрит только артефакт» после появления шестого файла стал
+     тоньше: папка модерации больше не запрещена сборщику целиком — из неё разрешён
+     ровно один исходник и ровно в одном назначении. Поэтому запрет перечислен по
+     именам: досье, иконки и кадры должны краснеть, а политика — нет. */
+  ok(/POLICY_MD = path\.join\('assets', 'moderation', 'privacy-policy\.md'\)/.test(builderTxt),
+    'сборщик берёт из дерева модерации единственный исходник — политику');
+  ok(!/application\.md|icon-\d+\.png|screen-(?:neon|meme|sat|bonus)\.png/.test(builderTxt),
+    'ни досье, ни иконок, ни кадров сборщик не видит');
   if (fs.existsSync(ARTIFACT_DIR)) {
-    ok(!fs.existsSync(path.join(ARTIFACT_DIR, 'assets', 'moderation', 'privacy-policy.md')), 'в _site политики нет');
+    ok(!fs.existsSync(path.join(ARTIFACT_DIR, 'assets')),
+      'в _site нет каталога assets: из дерева модерации поехала только отрендеренная страница');
+    ok(!fs.existsSync(path.join(ARTIFACT_DIR, 'privacy-policy.md')), 'в _site нет исходника политики');
+    const pub = path.join(ARTIFACT_DIR, 'privacy.html');
+    ok(fs.existsSync(pub), 'в _site есть публичная страница политики');
+    if (fs.existsSync(pub)) {
+      const t = readText(pub);
+      ok(!t.includes('<!--'), 'публичная политика без комментариев репозитория');
+      ok((t.match(/<h2>/g) || []).length === 9, 'публичная политика несёт все девять разделов',
+        (t.match(/<h2>/g) || []).length);
+      const leak = ['tools/', 'assets/moderation', 'check-moderation-kit', 'make-moderation-assets',
+        'build-release', 'node_modules', 'RELEASE-STRIP'].filter((n) => t.includes(n));
+      ok(leak.length === 0, 'публичная политика не называет путей внутренней кухни', leak);
+      ok(!/<script/.test(t), 'в публичной политике нет скриптов: модератор открывает её чужим браузером');
+    }
   }
 }
 
 console.log('\n[8] Ждёт ручного заполнения');
 {
-  const KNOWN = ['РАЗРАБОТЧИК', 'EMAIL', 'ДАТА', 'ВЕРСИЯ', 'URL_ПОЛИТИКИ', 'КАТЕГОРИЯ', 'ВОЗРАСТНОЙ ЦЕНЗ'];
+  /* URL_ПОЛИТИКИ из этого списка вышел: адрес перестал быть решением «на потом» и
+     стал структурой — его задаёт allowlist сборщика, его требует по сети
+     .release-check.cjs, и смена адреса ломает прогон, а не ждёт человека. Оставшиеся
+     шесть маркеров вывести из репозитория нельзя: это имя, контакт, дата отправки,
+     версия и два значения из выпадающих списков кабинета. */
+  const KNOWN = ['РАЗРАБОТЧИК', 'EMAIL', 'ДАТА', 'ВЕРСИЯ', 'КАТЕГОРИЯ', 'ВОЗРАСТНОЙ ЦЕНЗ'];
   const seen = new Set();
-  for (const [name, text] of [['privacy-policy.md', policy], ['application.md', dossier]]) {
+  const PUB_POLICY = path.join(ARTIFACT_DIR, 'privacy.html');
+  const published = fs.existsSync(PUB_POLICY) ? flat(readText(PUB_POLICY)) : '';
+  // Публичный рендер сканируется наравне с бумагами: маркер, доживший до страницы,
+  // увидит модератор, а не только мы в репозитории.
+  for (const [name, text] of [['privacy-policy.md', policy], ['application.md', dossier],
+    ['privacy.html (публичный рендер)', published]]) {
     for (const m of text.match(/\{\{[^}]+\}\}/g) || []) {
       const label = m.slice(2, -2).trim();
       // «{{...}}» в прозе — описание соглашения, а не маркер: без этого различия

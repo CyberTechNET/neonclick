@@ -2,8 +2,9 @@
 /* ==========================================================================
  * tools/build-release.cjs — сборка БОЕВОГО артефакта для GitHub Pages.
  *
- * На выходе: каталог _site/ ровно из пяти файлов — index.html, style.css,
- * game.js, vk-integration.js и вендоренного vk-bridge.<версия>.js. Это единственное,
+ * На выходе: каталог _site/ ровно из шести файлов — index.html, style.css,
+ * game.js, vk-integration.js, вендоренный vk-bridge.<версия>.js и privacy.html
+ * (публичная копия политики конфиденциальности для кабинета VK). Это единственное,
  * что должны видеть игрок и модерация VK. Всё остальное дерево (наборы проверок,
  * base_*.txt, package.json, tools/) в артефакт не едет: на Pages сайт публичен
  * даже из приватного репозитория, поэтому «положить только нужное» обязана быть
@@ -46,6 +47,14 @@ const problems = [];
 const fail = (m) => problems.push(m);
 const sha256 = (b) => crypto.createHash('sha256').update(b).digest('hex');
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * EOL-нормализация. Рабочее дерево на Windows живёт с CRLF, чекаут в Actions —
+ * с LF, и без этого шага один и тот же коммит давал бы два разных артефакта с
+ * разными ?v. Нормализуем в LF здесь, в сборке: детерминизм должен быть свойством
+ * конвейера, а не состоянием конкретного диска.
+ */
+const norm = (t) => t.replace(/\r\n/g, '\n');
 
 /** Разбивает текст, запоминая его перевод строки, чтобы не переписывать весь файл. */
 function splitLines(text) {
@@ -111,19 +120,200 @@ const sdkRef = /const SDK_LOCAL = '([^']+)';/.exec(vkOut);
 if (!sdkRef) fail('vk-integration.js: не найден SDK_LOCAL — цепочка загрузки SDK без локального файла не собирается');
 else if (sdkRef[1] !== VENDOR.file) fail('vk-integration.js: SDK_LOCAL = ' + sdkRef[1] + ', а провендорен ' + VENDOR.file);
 
-/* ---------- 4. index.html: ?v= по содержанию КОНЕЧНЫХ файлов ---------- */
+/* ---------- 3b. privacy.html: шестой файл артефакта — публичная политика ---------- */
 /**
- * EOL-нормализация. Рабочее дерево на Windows живёт с CRLF, чекаут в Actions —
- * с LF, и без этого шага один и тот же коммит давал бы два разных артефакта с
- * разными ?v. Нормализуем в LF здесь, в сборке: детерминизм должен быть свойством
- * конвейера, а не состоянием конкретного диска.
+ * Источник — файл политики в дереве модерации: тот же, который
+ * check-moderation-kit сверяет с game.js и vk-integration.js. Отдельной «страницы
+ * для людей» в репозитории нет намеренно: у двух копий одного юридического текста
+ * судьба расходиться молча, а политика устаревает первой из всех бумаг.
+ *
+ * Рендерер покрывает ровно то подмножество Markdown, которое есть в исходнике:
+ * заголовки, таблицы, списки с продолжениями строк, инлайн-код, жирный текст,
+ * ссылки и абзацы. Выбрасывается одно — HTML-комментарии: там внутренняя кухня
+ * репозитория, месту которой не в публичном документе. Всё остальное обязано
+ * доехать дословно, и это не надежда на аккуратность: видимый текст страницы
+ * сравнивается ниже с текстом исходника целиком, поэтому потерянный абзац,
+ * съехавшая ячейка или проглоченный маркер останавливают сборку.
  */
-const norm = (t) => t.replace(/\r\n/g, '\n');
+const POLICY_MD = path.join('assets', 'moderation', 'privacy-policy.md');
+const isTableDelim = (l) => /^\s*\|[\s|:\-]+\s*$/.test(l) && l.includes('--');
+const htmlEscape = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const htmlUnescape = (s) => s.replace(/&quot;/g, '"').replace(/&lt;/g, '<')
+  .replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+const markersOf = (s) => (s.match(/\{\{[^}]+\}\}/g) || []).sort();
+const collapseWs = (s) => s.replace(/\s+/g, ' ').trim();
+
+function inlineMd(s) {
+  return htmlEscape(s)
+    .replace(/`([^`]+)`/g, (m, c) => '<code>' + c + '</code>')
+    .replace(/\*\*([^*]+)\*\*/g, (m, c) => '<strong>' + c + '</strong>')
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (m, txt, href) => '<a href="' + href + '">' + txt + '</a>');
+}
+
+/** Markdown → тело документа. Возвращает также заголовок H1 и число разделов H2. */
+function mdToBody(md) {
+  const lines = norm(md.replace(/<!--[\s\S]*?-->/g, '')).split('\n');
+  const out = [];
+  let h1 = null;
+  let i = 0;
+  const list = (re, wrap) => {
+    const items = [];
+    while (i < lines.length && lines[i].trim()) {
+      const mm = re.exec(lines[i]);
+      if (mm) items.push(mm[mm.length - 1]);
+      else if (/^\s{2,}\S/.test(lines[i])) items[items.length - 1] += ' ' + lines[i].trim();
+      else break;
+      i++;
+    }
+    out.push('<' + wrap + '>' + items.map((t) => '<li>' + inlineMd(t) + '</li>').join('') + '</' + wrap + '>');
+  };
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    let m;
+    if ((m = /^(#{1,6})\s+(.*)$/.exec(line))) {
+      const lvl = m[1].length;
+      if (lvl === 1 && h1 === null) h1 = m[2].trim();
+      out.push('<h' + lvl + '>' + inlineMd(m[2].trim()) + '</h' + lvl + '>');
+      i++;
+    } else if (line.trimStart().startsWith('|')) {
+      const rows = [];
+      while (i < lines.length && lines[i].trimStart().startsWith('|')) {
+        if (!isTableDelim(lines[i])) {
+          rows.push(lines[i].trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim()));
+        }
+        i++;
+      }
+      const head = rows.shift() || [];
+      out.push('<table><thead><tr>' + head.map((c) => '<th>' + inlineMd(c) + '</th>').join('') +
+        '</tr></thead>' + (rows.length
+          ? '<tbody>' + rows.map((r) => '<tr>' + r.map((c) => '<td>' + inlineMd(c) + '</td>').join('') + '</tr>').join('') + '</tbody>'
+          : '') + '</table>');
+    } else if (/^([*\-])\s+/.test(line)) {
+      list(/^([*\-])\s+(.*)$/, 'ul');
+    } else if (/^\d+\.\s+/.test(line)) {
+      list(/^(\d+)\.\s+(.*)$/, 'ol');
+    } else {
+      const buf = [line];
+      i++;
+      while (i < lines.length && lines[i].trim() && !/^(?:#{1,6}\s|[*\-]\s|\d+\.\s|\s*\|)/.test(lines[i])) {
+        buf.push(lines[i]);
+        i++;
+      }
+      out.push('<p>' + inlineMd(collapseWs(buf.join(' '))) + '</p>');
+    }
+  }
+  return { body: out.join('\n'), h1: h1, h2: out.filter((b) => b.startsWith('<h2>')).length };
+}
+
+/** Тот же исходник, но как простой текст: вторая, независимая проекция для сверки.
+ *  Префикс снимается ровно один и в порядке очередности: у строки «## 1. Кто мы»
+ *  заголовок, а не список, и «1. » — часть его текста; снимать её вторым проходом
+ *  означало бы сверять страницу с текстом, которого в исходнике не было. */
+function mdToPlain(md) {
+  return norm(md.replace(/<!--[\s\S]*?-->/g, '')).split('\n')
+    .filter((l) => !isTableDelim(l))
+    .map((l) => l.replace(/^(?:#{1,6}|[*\-]|\d+\.)\s+/, '').replace(/^\s*\|/, '').replace(/\|\s*$/, ''))
+    .join('\n')
+    .replace(/\|/g, ' ')
+    .replace(/`([^`]*)`/g, '$1')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)\s]*\)/g, '$1');
+}
+
+/** Шапка (title, style) в сравнение не входит: её содержимое — разметка документа,
+ *  а не текст политики. Инлайновые теги исчезают бесследно (как исчезают их
+ *  маркеры в исходнике), а блочные оставляют пробел — иначе границы абзацев
+ *  склеили бы слова в одно и сверка краснела бы на собственной разметке. */
+function htmlToPlain(html) {
+  return htmlUnescape(html.replace(/<head>[\s\S]*?<\/head>/g, '')
+    .replace(/<\/?(?:code|strong|em|a)(?:\s[^>]*)?>/g, '').replace(/<[^>]+>/g, ' '));
+}
+
+/** Оформление страницы. Держим его внутри документа: шестой файл артефакта не
+ *  имеет права тянуть за собой седьмой (css), а модератор VK открывает ссылку
+ *  любым браузером, поэтому никаких зависимостей и никаких скриптов. */
+const PRIVACY_CSS = [
+  ':root{color-scheme:light dark;--fg:#15171c;--muted:#5a6270;--bg:#fff;--card:#f4f6fa;--line:#d9dee8;--accent:#3b5bdb}',
+  '@media (prefers-color-scheme:dark){:root{--fg:#e8eaf0;--muted:#9aa3b2;--bg:#101217;--card:#171a21;--line:#2a2f3a;--accent:#8ea2ff}}',
+  '*{box-sizing:border-box}',
+  'html{background:var(--bg);color:var(--fg);font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-text-size-adjust:100%}',
+  'body{margin:0;padding:24px 16px 64px}',
+  'main{max-width:46rem;margin:0 auto}',
+  'h1{font-size:1.6rem;line-height:1.25;margin:0 0 1.2em}',
+  'h2{font-size:1.15rem;margin:2em 0 .6em;padding-top:.6em;border-top:1px solid var(--line)}',
+  'p,li{overflow-wrap:anywhere}',
+  'ul,ol{padding-left:1.4em}',
+  'code{background:var(--card);border:1px solid var(--line);border-radius:4px;padding:.08em .3em;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.92em}',
+  'table{width:100%;border-collapse:collapse;margin:1em 0;font-size:.94em;display:block;overflow-x:auto}',
+  'th,td{border:1px solid var(--line);padding:.5em .6em;text-align:left;vertical-align:top}',
+  'th{background:var(--card);font-weight:600}',
+  'a{color:var(--accent)}'
+].join('\n');
+
+const policySrc = fs.existsSync(path.join(ROOT, POLICY_MD)) ? read(POLICY_MD) : null;
+if (!policySrc) fail(POLICY_MD + ': исходник политики не найден — шестой файл артефакта не из чего собирать');
+
+/** Текст политики без комментариев репозитория: именно он выходит в свет. */
+const policyBody = policySrc ? policySrc.replace(/<!--[\s\S]*?-->/g, '') : '';
+let privacyOut = '';
+if (policySrc) {
+  const rendered = mdToBody(policySrc);
+  privacyOut = '<!DOCTYPE html>\n<html lang="ru">\n<head>\n<meta charset="utf-8">\n' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
+    '<title>' + htmlEscape(rendered.h1 || '') + '</title>\n<style>\n' + PRIVACY_CSS +
+    '\n</style>\n</head>\n<body>\n<main>\n' + rendered.body + '\n</main>\n</body>\n</html>\n';
+
+  /* Постусловия — по готовому тексту страницы, а не по факту срабатывания
+   * регэкспов рендерера. Рендерер, который тихо съел абзац, хуже отсутствия
+   * рендерера: страницу читает модератор, а не мы. */
+  const want = collapseWs(mdToPlain(policySrc));
+  const got = collapseWs(htmlToPlain(privacyOut));
+  if (want !== got) {
+    let k = 0;
+    while (k < want.length && k < got.length && want[k] === got[k]) k++;
+    fail('privacy.html: видимый текст разошёлся с исходником на символе ' + k +
+      '\n        исходник: …' + want.slice(Math.max(0, k - 70), k + 70) +
+      '\n        страница: …' + got.slice(Math.max(0, k - 70), k + 70));
+  }
+  const h2Src = (norm(policyBody).match(/^## /gm) || []).length;
+  if (h2Src !== rendered.h2) fail('privacy.html: разделов H2 в исходнике ' + h2Src + ', а на странице ' + rendered.h2);
+  if (!rendered.h1) fail('privacy.html: у исходника нет заголовка H1 — нечем заполнить <title>');
+  if (privacyOut.includes('<!--')) fail('privacy.html: в публичной странице остался HTML-комментарий');
+  // Маркер в исходнике = маркер на публичной странице. Рендерер не вправе ни
+  // проглотить незакрытое (его заметят только на модерации), ни придумать.
+  if (JSON.stringify(markersOf(policyBody)) !== JSON.stringify(markersOf(privacyOut))) {
+    fail('privacy.html: маркеры {{...}} изменились при рендере: ' + markersOf(policyBody).join(', ') +
+      ' → ' + markersOf(privacyOut).join(', '));
+  }
+  // Подмножество Markdown у рендерера ограниченное. Если в видимом тексте остались
+  // его маркеры, конструкция в исходнике не понята, и модератор прочитает «**» и
+  // ` вместо смысла. Потерянного слова тут нет — есть непереведённая разметка.
+  const visible = collapseWs(htmlToPlain(privacyOut));
+  for (const junk of ['`', '**', '__', '<!--']) {
+    if (visible.includes(junk)) fail('privacy.html: в видимом тексте остались маркеры Markdown: «' + junk + '»');
+  }
+  for (const needle of ['RELEASE-STRIP', 'window.NEON', 'sourceMappingURL', 'check-moderation-kit',
+    'make-moderation-assets', 'build-release', '.release-check', 'tools/', 'node_modules',
+    'assets/moderation', 'DISTORT', 'stand-guard']) {
+    if (privacyOut.includes(needle)) fail('privacy.html: наружу едет «' + needle + '»');
+  }
+  for (const must of ['<!DOCTYPE html>', '<html lang="ru">', '<meta charset="utf-8">']) {
+    if (!privacyOut.includes(must)) fail('privacy.html: нет ' + must);
+  }
+  const pBytes = Buffer.byteLength(privacyOut, 'utf8');
+  if (pBytes < 6000) fail('privacy.html: весит ' + pBytes + ' байт — меньше всего документа, рендер что-то потерял');
+  if (pBytes > 80000) fail('privacy.html: весит ' + pBytes + ' байт — неожиданно много, проверить состав');
+}
+
+/* ---------- 4. index.html: ?v= по содержанию КОНЕЧНЫХ файлов ---------- */
 const ART = {
   'index.html': null,
   'style.css': norm(SRC['style.css']),
   'game.js': norm(gameOut),
   'vk-integration.js': norm(vkOut),
+  'privacy.html': norm(privacyOut),
   [VENDOR.file]: norm(sdkOut)
 };
 const ver = {};
@@ -169,7 +359,12 @@ for (const m of htmlOut.matchAll(/(?:src|href)="([^"]+)"/g)) {
 // человек не обязан знать, что когда-то здесь был отладочный хук и какие наборы
 // его проверяли. Ссылки на сами наборы проверок в комментариях оставлены: они
 // описывают, ГДЕ закреплён инвариант, и ничего не открывают.
-const joined = EXPECTED.map((f) => ART[f]).join('\n');
+// Область — игровые файлы: политика проверяется своим списком утечек выше, потому
+// что она обязана называть вещи своими именами («в публичной сборке флаг DEBUG
+// заменяется false»), и запрет на слово DEBUG в её отношении значил бы, что
+// документ не может описать то, что мы вырезаем.
+const GAME_ONLY = ['index.html', 'style.css', 'game.js', 'vk-integration.js', VENDOR.file];
+const joined = GAME_ONLY.map((f) => ART[f]).join('\n');
 for (const needle of ['RELEASE-STRIP', 'window.NEON', 'NEON.', '?debug=1', 'sourceMappingURL', "has('debug')"]) {
   if (joined.includes(needle)) fail('артефакт содержит след «' + needle + '»');
 }
@@ -190,9 +385,13 @@ console.log('\nБоевой артефакт: ' + OUT);
 for (const f of EXPECTED) {
   const size = fs.statSync(path.join(OUT, f)).size;
   total += size;
-  console.log('  ' + f.padEnd(24) + String(size).padStart(7) + '  ' + (ver[f] ? '?v=' + ver[f] : 'версия в имени файла'));
+  const tag = ver[f] ? '?v=' + ver[f]
+    : (f === VENDOR.file ? 'версия в имени файла'
+      : (f === 'index.html' ? 'сам раздаёт ?v трём ресурсам' : 'без ?v: документ не грузится игрой'));
+  console.log('  ' + f.padEnd(24) + String(size).padStart(7) + '  ' + tag);
 }
 console.log('  ' + 'итого'.padEnd(24) + String(total).padStart(7));
 console.log('  отладка: хук вырезан, DEBUG === false → ?debug=1 не даёт ни NEON, ни отключения потолка правдоподобия');
 console.log('  SDK: ' + VENDOR.file + ' (' + VENDOR.package + ' ' + VENDOR.version + ', ' + VENDOR.license + '), sha256 ' + VENDOR.sha256.slice(0, 16) + '…, CDN — резервная цепочка');
+console.log('  политика: privacy.html отрендерена из ' + POLICY_MD + ' — комментарии вырезаны, видимый текст сверен с исходником');
 console.log('  состав: ' + EXPECTED.length + ' файлов, ничего из набора проверок рядом нет');
