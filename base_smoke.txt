@@ -265,7 +265,7 @@
    [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package
    ✅ 10.4 лимит выбран досуха
    ✅ 10.4 причина отказа — limit
-   ✅ 10.4 кнопка «Играть» задизейблена
+   ✅ 10.4 кнопка «Поставить» задизейблена
    ✅ 10.4 карточка погасла, а не дразнится
    ✅ 10.4 сверх лимита ставка не списывается (иначе — монеты в никуда)
    [jsdomError] Not implemented: HTMLCanvasElement's getContext() method: without installing the canvas npm package

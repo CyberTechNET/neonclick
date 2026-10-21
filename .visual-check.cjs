@@ -272,14 +272,62 @@ function withDemo(src) {
   const stillZero = await page.evaluate(() => Math.floor(window.NEON.state().coins));
   ok2(stillZero === 0, 'после сброса и перезагрузки баланс остаётся нулём — сейв действительно очищен', stillZero);
 
-  /* --- 10. Ряд вьюпортов: от iPhone SE до планшета --- */
+  /* --- 10. Ряд вьюпортов: от iPhone SE до планшета и повёрнутого телефона --- */
   const VIEWPORTS = [
     { w: 320, h: 568, tag: 'iPhone SE 1' },
     { w: 375, h: 667, tag: 'iPhone SE 2 / 8' },
     { w: 390, h: 844, tag: 'iPhone 14' },
     { w: 412, h: 915, tag: 'Galaxy A/S' },
+    { w: 844, h: 390, tag: 'iPhone ландшафт' },
+    { w: 740, h: 360, tag: 'Android ландшафт' },
     { w: 768, h: 1024, tag: 'планшет' }
   ];
+
+  /* Монета — единственная кнопка, в которую играют непрерывно, и она обязана
+     оставаться диском, а не становиться препятствием для соседних элементов.
+     Ни её золотой круг, ни жёсткая дуга кольца (inset −7% от диаметра) не имеют
+     права накрыть подсказку «Жми по монете. Держи серию — лови крит.» сверху или
+     таббар с «Бонусами» снизу. Баг жил здесь: размер монеты считался от ширины
+     экрана, поэтому на низком вьюпорте (шапка VK в WebView, полная лента наград,
+     плашка буста в кошельке) диск расползался ровно туда.
+     Меряется на двух табах — «Магазин» (самая низкая панель) и «Бонусы» (самая
+     высокая): сцена между ними различается на сотню пикселей, и именно на
+     «Бонусах» запаса раньше не хватало. */
+  const RING_BLEED = 0.07;                 // .coin__ring: inset −7% + 2px рамки
+  async function clearance(vp, where) {
+    const c = await page.evaluate((bleed) => {
+      const box = (s) => { const e = document.querySelector(s); return e ? e.getBoundingClientRect() : null; };
+      const live = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none'; };
+      const cross = (a, b) => !!a && !!b && a.top < b.bottom && b.top < a.bottom && a.left < b.right && b.left < a.right;
+      const coin = box('#coin'), hint = box('.hint'), tabs = box('.tabs'), stage = box('#stage');
+      const p = Math.round(coin.width * bleed) + 2;
+      const aura = { top: coin.top - p, bottom: coin.bottom + p, left: coin.left - p, right: coin.right + p };
+      const mid = document.elementFromPoint(Math.round(coin.left + coin.width / 2), Math.round(coin.top + coin.height / 2));
+      const tb = box('.tab[data-tab="bonus"]');
+      const onTab = document.elementFromPoint(Math.round(tb.left + tb.width / 2), Math.round(tb.top + tb.height / 2));
+      const onHint = live('.hint') ? document.elementFromPoint(Math.round(hint.left + hint.width / 2), Math.round(hint.top + hint.height / 2)) : null;
+      return {
+        coin: Math.round(coin.width) + '×' + Math.round(coin.height),
+        disk: Math.abs(coin.width - coin.height) <= 1 && Math.round(coin.width) >= 64,
+        inStage: coin.top >= stage.top - 1 && coin.bottom <= stage.bottom + 1 &&
+          coin.left >= stage.left - 1 && coin.right <= stage.right + 1,
+        reachable: !!mid && !!mid.closest('#coin'),
+        tabHit: !!onTab && !!onTab.closest('.tabs'),
+        hintHit: !live('.hint') || (!!onHint && !!onHint.closest('.hint')),
+        overHint: live('.hint') && cross(aura, hint),
+        overTabs: cross(aura, tabs)
+      };
+    }, RING_BLEED);
+    const t = vp.w + '×' + vp.h + ' [' + where + ']:';
+    log('  зазор монеты:', JSON.stringify(c));
+    ok2(c.disk, t + ' монета — диск (круг ≥64px), а не эллипс и не огрызок', c.coin);
+    ok2(c.inStage && c.reachable && c.tabHit && c.hintHit,
+      t + ' тап доходит и до монеты, и до таба «Бонусы», и до подсказки', c);
+    ok2(!c.overHint && !c.overTabs,
+      t + ' монета с кольцом не наезжает ни на подсказку, ни на таббар', c);
+    return c;
+  }
+
   for (const vp of VIEWPORTS) {
     await page.setViewport({ width: vp.w, height: vp.h, deviceScaleFactor: 2, isMobile: vp.w < 600, hasTouch: vp.w < 600 });
     await page.reload({ waitUntil: 'networkidle2' });
@@ -301,8 +349,12 @@ function withDemo(src) {
       };
     });
     const before = await page.evaluate(() => window.NEON.state().coins);
-    const cy = await page.$eval('#coin', (e) => { const b = e.getBoundingClientRect(); return b.y + b.height / 2; });
-    await page.mouse.click(Math.round(vp.w / 2), Math.round(cy));
+    /* Тап — в центр самого диска, а не в середину экрана: в повёрнутом телефоне
+       сцена занимает левую колонку, и x=innerWidth/2 попал бы на панель
+       магазина, а не на монету (проверка «клик приносит монеты» краснела бы
+       там, где всё на самом деле хорошо). */
+    const cc = await page.$eval('#coin', (e) => { const b = e.getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; });
+    await page.mouse.click(Math.round(cc.x), Math.round(cc.y));
     await sleep(200);
     const after = await page.evaluate(() => window.NEON.state().coins);
     log(vp.w + '×' + vp.h + ' (' + vp.tag + '):', JSON.stringify(m), 'клик: +' + (after - before).toFixed(2));
@@ -311,6 +363,7 @@ function withDemo(src) {
     ok2(m.coinFits && m.reachable, vp.w + '×' + vp.h + ': монета целиком в экране и доступна тапу', m);
     ok2(m.panelFits && m.tabsFits, vp.w + '×' + vp.h + ': панель и таббар помещаются', m);
     ok2(after > before, vp.w + '×' + vp.h + ': живой тап по монете приносит монеты', [before, after]);
+    await clearance(vp, 'магазин');
     await shot('10-vp-' + vp.w + 'x' + vp.h);
 
     /* Та же сетка вьюпортов на новой вкладке «Гильдия»: здесь три таба вместо
@@ -420,6 +473,7 @@ function withDemo(src) {
       ok2(bo.lastShown, vp.w + '×' + vp.h + ': прокруткой открывается последняя карточка таба', bo.overflow);
     }
     ok2(bo.tapReaches, vp.w + '×' + vp.h + ': подложка-подсказка не перехватывает тап', null);
+    await clearance(vp, 'бонусы');
     await shot('10-bonus-' + vp.w + 'x' + vp.h);
     await page.click('.tab[data-tab="shop"]');
   }

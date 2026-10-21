@@ -9,6 +9,7 @@ _site/
 # (по умолчанию она пишет в os.tmpdir()/neon-shots).
 --shots/
 shots/
+.shots/
 
 # Логи и мусор ОС/редактора.
 *.log

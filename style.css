@@ -83,6 +83,15 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   position: relative; z-index: 2;
   display: flex; flex-direction: column;
   height: 100vh; height: 100dvh;
+  /* clip, а не hidden: рамка приложения = вьюпорт, и за её пределы ничего
+     утечь не должно. Причина не косметическая: у кольца монеты (inset −7%)
+     bounding box при повороте раздувается до √2 от коробки, а у ореола
+     (inset −18%) коробка и так на треть больше диска. Пикселей там нет —
+     но scrollable overflow документа они раздували: в ландшафте телефон
+     «вырастал» на 20–36px ниже вьюпорта. clip не заводит скролл-контейнер
+     (в отличие от hidden) и не клипит position:fixed модалку и тосты — они
+     не внутри рамки по цепочке containing block. */
+  overflow: clip;
   padding: calc(10px + var(--sa-t)) calc(14px + var(--sa-r)) calc(8px + var(--sa-b)) calc(14px + var(--sa-l));
   gap: 10px;
 }
@@ -172,17 +181,43 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 @keyframes pop { from { transform: scale(.92); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 /* ---------- Сцена и монета ---------- */
 .stage {
-  position: relative; flex: 1 1 auto; min-height: 0;
+  position: relative; flex: 1 1 auto; min-height: 132px;
   display: flex; align-items: center; justify-content: center;
+  /* Полосы сверху и снизу заняты декором, не монетой: сверху сидит подсказка
+     .hint (position:absolute; top:0, строка ~15px), снизу — неоновое кольцо,
+     которое торчит на 7% диаметра за край диска (см. .coin__ring). Монета
+     меряется высотой контентной области сцены (100cqh, см. .coin), поэтому эти
+     полосы — её физический предел: наезжать на текст подсказки или на таббар
+     «Бонусы» ей больше нечем. min-height — пол, ниже которого диск перестаёт
+     быть попаданием по пальцу: при нехватке места уступает панель (у неё
+     внутренний скролл), а не сцена. */
+  padding: 34px 0 22px;
+  container-type: size;
 }
 .fx-canvas { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; }
 .floats { position: absolute; inset: 0; z-index: 4; pointer-events: none; overflow: visible; }
 
 .coin {
   position: relative; z-index: 2;
-  width: min(58vw, 236px); aspect-ratio: 1 / 1; border-radius: 50%;
+  /* Размер задаёт ВЫСОТА СЦЕНЫ, а не ширина экрана. Было: width: min(58vw, 236px)
+     — диск рос от вьюпорта и на низком экране (шапка VK в WebView, вкладка
+     «Бонусы» с полной лентой наград, плашка буста в кошельке) распирал сцену:
+     наползал на подсказку «Жми по монете…» сверху и на таббар снизу. 100cqh —
+     высота контентной области сцены (её padding уже вычтен), aspect-ratio
+     переносит её в идеальный квадрат. Первая строка — фолбэк WebView без
+     container queries: неподдерживаемая единица роняет вторую декларацию,
+     и остаётся прежний, чуть хуже ведущий себя, но живой размер.
+     НЕ «height: 100% + width: auto»: Chromium в такой связке упирается в
+     max-width по ширине, высоту не пересчитывает и выдаёт эллипс 226×275. */
+  width: min(58vw, 236px);
+  width: min(58vw, 236px, 100cqh);
+  aspect-ratio: 1 / 1;
+  border-radius: 50%;
   display: grid; place-items: center;
   will-change: transform; touch-action: manipulation;
+  /* свой контейнер размеров — чтобы глиф и картинка темы росли от диска,
+     а не от ширины экрана (см. .coin__face, .coin__img) */
+  container-type: size;
 }
 /* внешнее неоновое свечение */
 .coin__halo {
@@ -195,6 +230,10 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 
 /* вращающееся неоновое кольцо */
 .coin__ring {
+  /* Единственный декор, который торчит за край диска жёсткой дугой:
+     7% диаметра + 2px рамки. Его запас учтён в padding сцены (см. .stage) —
+     трогать inset нельзя, не пересняв иконки заявки: диск в icon-512.png
+     рисуется этим же правилом. */
   position: absolute; inset: -7%; border-radius: 50%; pointer-events: none; opacity: .9;
   background: conic-gradient(from 0deg, transparent 0 12%, var(--cyan) 20%, transparent 34% 60%, var(--magenta) 72%, transparent 86%);
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
@@ -216,13 +255,26 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   border: 2px solid rgba(255, 231, 168, .8);
   transition: transform .09s cubic-bezier(.3, 1.4, .5, 1), box-shadow .18s ease;
 }
-.coin__face { font-size: clamp(46px, 17vw, 82px); line-height: 1; filter: drop-shadow(0 3px 6px rgba(90, 45, 0, .6)); pointer-events: none; }
+/* Глиф масштабируется от самого диска (30% его меньшей стороны), а не от ширины
+   экрана: на низком экране монета теперь маленькая, и глиф в 17vw внутри неё
+   просто не поместился бы. Первая строка — фолбэк браузерам без container
+   queries: неподдерживаемая единица отбрасывает вторую декларацию, не правило. */
+.coin__face {
+  font-size: clamp(46px, 17vw, 82px);
+  font-size: clamp(22px, 30cqmin, 82px);
+  line-height: 1; filter: drop-shadow(0 3px 6px rgba(90, 45, 0, .6)); pointer-events: none;
+}
 
 /* Картинка монеты из темы. Заводится только когда она успешно загрузилась
    (см. mountCoinArt в game.js): пока грузится или при ошибке — виден глиф.
    Так дальний/битый URL не превращает главную кнопку в битую иконку. */
 .coin__img {
+  /* Половина диска — ровно те же 118/236, что были: картинка темы следует за
+     размером монеты, а не за шириной экрана. Строкой выше — фолбэк браузерам
+     без единиц cq. */
   width: clamp(64px, 26vw, 118px); height: clamp(64px, 26vw, 118px);
+  width: 50%; height: 50%;
+  max-width: 118px; max-height: 118px;
   object-fit: contain; pointer-events: none;
   filter: drop-shadow(0 6px 18px rgba(0, 0, 0, .55));
 }
@@ -277,7 +329,10 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 /* ---------- Нижняя панель ---------- */
 .panel {
   position: relative;                             /* к панели цепляется подложка-подсказка скролла */
-  flex: none;
+  /* 0 1 auto, а не none: когда места на экране впритык, уступать обязана эта
+     панель, а не сцена — здесь лента карточек имеет внутренний скролл, а
+     монете скролл не выдашь. */
+  flex: 0 1 auto;
   display: flex; flex-direction: column; min-height: 0;
   max-height: 42vh;
   padding: 8px 12px 10px;
@@ -665,12 +720,18 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 
 /* ---------- Адаптив и доступность ---------- */
 /* Низкие экраны (iPhone SE, ландшафтные телефоны, WebView с шапкой VK):
-   монета должна целиком помещаться вместе с панелью магазина. */
+   потолок по ширине здесь ниже. Высоту считает сцена (100cqh), поэтому прежние
+   прокси «27vh/25vh» убраны: они угадывали высоту сцены по высоте экрана
+   и угадывали плохо. Каждое правило — две строки: фолбэк без container queries
+   и боевое с 100cqh (см. .coin). */
 @media (max-height: 700px) {
   .app { gap: 7px; padding-top: calc(7px + var(--sa-t)); padding-bottom: calc(6px + var(--sa-b)); }
   .wallet { padding: 9px 12px; }
   .balance { font-size: clamp(26px, 8vw, 36px); }
-  .coin { width: min(46vw, 27vh, 190px); }
+  .coin {
+    width: min(46vw, 190px);
+    width: min(46vw, 190px, 100cqh);
+  }
   .panel { max-height: 40vh; }
 }
 @media (max-height: 640px) {
@@ -680,8 +741,17 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   .balance-cap, .rate__label { font-size: 9.5px; }
   .rank { margin-top: 6px; }
   .hint { display: none; }
-  .coin { width: min(40vw, 25vh, 168px); }
-  .panel { max-height: 42vh; padding: 6px 10px 8px; }
+  /* Подсказки нет — верхний резерв сцены сжимается до запаса под кольцо. */
+  .stage { padding-top: 18px; min-height: 108px; }
+  .coin {
+    width: min(40vw, 168px);
+    width: min(40vw, 168px, 100cqh);
+  }
+  /* 38vh, а не 42vh, как было: следующая по высоте пауза (≤700px) уже урезала
+     панель до 40vh, а этот блок на самом мелком экране вдруг возвращал ей 42vh —
+     то есть отбирал у монеты место там, где его меньше всего. На 800×600
+     (десктопный iframe VK) с активным бустом диск из-за этого сжимался до 70px. */
+  .panel { max-height: 38vh; padding: 6px 10px 8px; }
   .tab { padding: 7px 0; font-size: 12px; }
   .tabbody { margin-top: 7px; gap: 6px; }
   .card { padding: 7px 8px 7px 10px; }
@@ -690,7 +760,32 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 }
 @media (min-width: 520px) {
   .app { max-width: 520px; margin: 0 auto; }
-  .coin { width: min(52vw, 236px); }
+  .coin {
+    width: min(52vw, 236px);
+    width: min(52vw, 236px, 100cqh);
+  }
+}
+/* Повёрнутый телефон: в одну колонку не встаётся ни диск, ни лента наград —
+   сцена схлопывалась в десятки пикселей, а монета лезла через кошелёк и таббар
+   наружу. Каркас становится сеткой: шапка и кошелёк во всю ширину, ниже слева
+   сцена с монетой, справа панель со своим внутренним скроллом. Только для
+   коротких ландшафтов — обычный десктопный iframe VK (800×600 и выше) остаётся
+   в привычной одной колонке. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .app {
+    display: grid; max-width: 720px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 6px 10px;
+  }
+  .topbar { grid-column: 1 / -1; grid-row: 1; }
+  .wallet { grid-column: 1 / -1; grid-row: 2; }
+  .stage { grid-column: 1; grid-row: 3; min-height: 0; padding: 18px 0 12px; }
+  .panel { grid-column: 2; grid-row: 3; max-height: none; }
+  .coin {
+    width: min(42vw, 200px);
+    width: min(42vw, 200px, 100cqh);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
