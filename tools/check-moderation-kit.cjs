@@ -215,7 +215,43 @@ console.log('\n[1] Комплект на месте и цел');
     if (digests.has(d)) ok(false, spec.name + ': не дубликат ' + digests.get(d), d);
     else digests.set(d, spec.name);
   }
-  ok(digests.size === PNGS.length, 'шесть файлов дали шесть разных содержимых (тихая копипаста ловится)', digests.size);
+  /* Седьмой файл — единственный, которого ещё может не быть: кадр вкладки «Гильдия»
+     снимается руками (досье §5), и генератор не производит его ни при каких условиях,
+     потому что мока, привозящего настоящий vk_group_id от VK, в комплекте нет и быть
+     не может. Держать его как обычное падение значило бы повторить ошибку маркеров
+     из [8]: прогон, который не умеет зеленеть в конце, — декорация с открытым финалом.
+     Поэтому отсутствие — это ⏳ ожидание: выход 1, отправку держит, машиной не чинится.
+     А появление файла включает полную пару проверок — форму кадра и его неподдельность. */
+  const GUILD = 'screen-guild.png';
+  const guildHere = fs.existsSync(path.join(KIT, GUILD));
+  if (!guildHere) {
+    pending.push('assets/moderation/' + GUILD +
+      ' \u2192 кадр вкладки «Гильдия» снимается руками после README п.3 (досье §5)');
+  } else {
+    const buf = fs.readFileSync(path.join(KIT, GUILD));
+    const head = geomOverride || pngHead(buf);
+    ok(!!head, GUILD + ': это PNG с IHDR');
+    ok(buf.length > 20000, GUILD + ': не пустышка (' + buf.length + ' байт)', buf.length);
+    ok(head && head.depth === 8, GUILD + ': глубина 8 бит', head && head.depth);
+    ok(head && (head.color === 2 || head.color === 6), GUILD + ': цвет RGB или RGBA', head && head.color);
+    /* Вертикаль и плотность — наш контракт, а не требование VK: четыре кадра генератора
+       сняты в 390×844 @2x, и седьмой, лежащий рядом с ними в одном поле витрины, не
+       обязан отличаться от них классом. Отсюда 780 px по короткой стороне: снимок
+       телефона проходит, альбомный кадр с рабочего стола — нет. */
+    ok(head && head.h > head.w && Math.min(head.w, head.h) >= SHOTS.w,
+      GUILD + ': вертикальный кадр, короткая сторона не меньше ' + SHOTS.w + ' px',
+      head && { w: head.w, h: head.h });
+    const dg = sha(buf);
+    ok(!digests.has(dg), GUILD + ': не копия одного из сгенерированных кадров', digests.get(dg));
+    if (!digests.has(dg)) digests.set(dg, GUILD);
+    ok(dossier.includes(GUILD), 'досье называет файл гильдейского кадра (§1, §5)', GUILD);
+  }
+  // Число в тексте живёт вместе со списком: жёсткое «шесть» соврало бы в тот момент,
+  // когда седьмой файл доехал, — а это ровно тот момент, когда прогону верят.
+  const NUM = { 5: 'пять', 6: 'шесть', 7: 'семь', 8: 'восемь' };
+  const total = PNGS.length + (guildHere ? 1 : 0);
+  ok(digests.size === total,
+    NUM[total] + ' файлов дали ' + NUM[total] + ' разных содержимых (тихая копипаста ловится)', digests.size);
   ok(policy.length > 4000, 'политика конфиденциальности написана (' + policy.length + ' символов)', policy.length);
   ok(dossier.length > 4000, 'досье написано (' + dossier.length + ' символов)', dossier.length);
 }
@@ -361,7 +397,17 @@ console.log('\n[7] Комплект не ездит наружу — кроме 
      именам: досье, иконки и кадры должны краснеть, а политика — нет. */
   ok(/POLICY_MD = path\.join\('assets', 'moderation', 'privacy-policy\.md'\)/.test(builderTxt),
     'сборщик берёт из дерева модерации единственный исходник — политику');
-  ok(!/application\.md|icon-\d+\.png|screen-(?:neon|meme|sat|bonus)\.png/.test(builderTxt),
+  /* Перечисление по именам обязано догонять папку. Статичный хостинг не отдаёт листинг
+     каталога, поэтому FOREIGN проверяет каждый файл комплекта отдельно — и любой
+     положенный в папку файл, не названный в этом списке, не проверяется ничем: ровно
+     так седьмой кадр прожил бы незамеченным. Проверка выведена из фактического
+     содержимого папки, а не из PNGS: она краснеет на файле, которого нет ни в одном
+     списке, — то есть на том, ради чего она написана. */
+  const kitPngs = fs.readdirSync(KIT).filter((f) => /\.png$/i.test(f)).sort();
+  const unenumerated = kitPngs.filter((f) => !releaseTxt.includes("'assets/moderation/" + f + "'"));
+  ok(kitPngs.length >= PNGS.length, 'боевой прогон видит папку модерации: PNG в ней ' + kitPngs.length, kitPngs.length);
+  ok(unenumerated.length === 0, 'каждый PNG комплекта назван в FOREIGN боевого прогона', unenumerated);
+  ok(!/application\.md|icon-\d+\.png|screen-(?:neon|meme|sat|bonus|guild)\.png/.test(builderTxt),
     'ни досье, ни иконок, ни кадров сборщик не видит');
   if (fs.existsSync(ARTIFACT_DIR)) {
     ok(!fs.existsSync(path.join(ARTIFACT_DIR, 'assets')),
@@ -438,7 +484,12 @@ console.log('\n[8] Ждёт ручного заполнения');
 const head = DISTORT ? '===== КОМПЛЕКТ, НЕГАТИВНЫЙ КОНТРОЛЬ ' + DISTORT + ' =====' : '===== КОМПЛЕКТ МОДЕРАЦИИ =====';
 console.log('\n' + head + ' ' + passed + ' ok / ' + failed + ' fail / ' + pending.length + ' ждёт');
 if (failed) console.log('Есть падения: либо документ разошёлся с кодом, либо сломан сам комплект. Конкретика — в ❌ выше.');
-if (!failed && pending.length) console.log('Машина сходится. Отправке мешают только ' + pending.length + ' ручных решений из раздела 6 досье.');
+if (!failed && pending.length) {
+  const n = pending.length;
+  const tail = n === 1 ? 'ручная позиция' : (n < 5 ? 'ручные позиции' : 'ручных позиций');
+  console.log('Машина сходится. Отправке ' + (n === 1 ? 'мешает' : 'мешают') + ' только ' + n + ' ' + tail +
+    ': материалы (§5) и решения (§6) досье. Ни одна не чинится кодом.');
+}
 process.exit(failed || pending.length ? 1 : 0);
 
 

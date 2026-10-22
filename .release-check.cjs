@@ -60,6 +60,11 @@ const FOREIGN = ['package.json', 'package-lock.json', 'README.md', '.gitignore',
   'assets/moderation/icon-192.png', 'assets/moderation/screen-neon.png',
   'assets/moderation/screen-meme.png', 'assets/moderation/screen-sat.png',
   'assets/moderation/screen-bonus.png',
+  // Седьмой кадр комплекта — ручной (досье §5). Перечислен здесь наравне с
+  // генераторскими: право на жизнь он получил от человека, а не от генератора, и
+  // наружу ему смотреть не меньше, чем остальным. npm run check:kit сверяет, что
+  // этот список догоняет содержимое assets/moderation/*.png.
+  'assets/moderation/screen-guild.png',
   // Документы заявки перечислены явно, а не каталогом: статичный хостинг не отдаёт
   // список каталога, поэтому 'assets/moderation/' одной строкой проверял бы ничего.
   'assets/moderation/privacy-policy.md', 'assets/moderation/application.md',
