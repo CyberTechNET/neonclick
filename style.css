@@ -687,6 +687,57 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .raid.is-blocked { opacity: .58; }
 .raid.is-blocked .raid__tier { background: rgba(255, 255, 255, .1); color: var(--muted); }
 
+/* --- VIP за внутриигровую честь (раздел 13e) ----------------------------
+   Палитра — магента, а не золото рейда: статус обязан читаться другим
+   объектом, иначе игрок путает его с обменом чести. Вне статуса карточка
+   намеренно тихая (стекло и тонкая рамка, без градиента): дразниться
+   подсветкой того, чего сейчас нет, нельзя — тот же принцип, что у
+   .raid.is-blocked выше. */
+.vip {
+  position: relative; display: flex; flex-direction: column; gap: 8px;
+  padding: 11px 12px 10px;
+  background: linear-gradient(120deg, rgba(255, 255, 255, .04), var(--glass));
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  overflow: hidden;
+}
+.vip__head { display: flex; align-items: center; gap: 9px; }
+.vip__ico { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-size: 17px; background: rgba(255, 255, 255, .07); border: 1px solid var(--line); }
+.vip__txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.vip__title { font-size: 14px; font-weight: 800; }
+.vip__sub { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-style: normal; }
+.vip__state {
+  flex: none; padding: 3px 8px; border-radius: 99px; max-width: 34%;
+  font-size: 11px; font-weight: 800; color: var(--muted);
+  background: rgba(255, 255, 255, .06); border: 1px solid var(--line);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.vip__row { display: flex; align-items: center; gap: 10px; }
+.vip__have {
+  flex: none; display: flex; align-items: baseline; gap: 4px;
+  padding: 3px 8px; border-radius: 99px;
+  background: rgba(255, 255, 255, .06); border: 1px solid var(--line);
+}
+.vip__have b { font-size: 12.5px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--gold); }
+.vip__have i { font-size: 9px; font-style: normal; color: var(--muted); }
+.buy--vip { flex: 1 1 auto; min-width: 0; color: #1a0413; background: linear-gradient(135deg, var(--magenta), #ff8ae8); box-shadow: 0 6px 18px rgba(255, 43, 214, .3); }
+.vip__note { margin: 0; font-size: 10.5px; line-height: 1.35; color: var(--muted); }
+
+/* Активный статус светится только тогда, когда он есть на самом деле. */
+.vip.is-on {
+  background: linear-gradient(120deg, rgba(255, 43, 214, .14), rgba(255, 43, 214, .05) 58%, var(--glass));
+  border-color: rgba(255, 43, 214, .4);
+}
+.vip.is-on .vip__state { color: #1a0413; background: linear-gradient(135deg, var(--magenta), #ff8ae8); border-color: transparent; }
+.vip.is-on .vip__ico { background: rgba(255, 43, 214, .16); border-color: rgba(255, 43, 214, .38); }
+/* Значок на карточке гильдии — вся «социальная» привилегия статуса: он ничего
+   не решает в гильдии и не даёт права на общий счёт (инвариант 3 раздела 13d). */
+.guild.is-vip { border-color: rgba(255, 43, 214, .34); }
+.guild.is-vip .guild__name::after {
+  content: 'VIP'; margin-left: 6px; padding: 1px 5px; border-radius: 99px;
+  font-size: 8.5px; font-weight: 800; letter-spacing: .04em; color: #1a0413;
+  background: linear-gradient(135deg, var(--magenta), #ff8ae8); vertical-align: 1px;
+}
+
 .note { margin: 2px 2px 0; font-size: 10.5px; line-height: 1.4; color: var(--muted); text-align: center; }
 
 /* ---------- Тосты ---------- */

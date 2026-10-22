@@ -528,7 +528,7 @@ async function scenario(browser, scen, extraQ) {
     ok(c1 - c0 >= 500, 'репост по долгому тапу оплачен (≥500 монет, сверх тапа)', [c0, c1]);
     ok(await sh.pg.evaluate(() => window.NEON.state().shares) === 1
       && await sh.pg.evaluate(() => window.NEON.state().shareN) === 1, 'счётчики репостов выросли на 1');
-    ok(await sh.pg.evaluate(() => window.NEON.state().v) === 4, 'состояние — схема v4');
+    ok(await sh.pg.evaluate(() => window.NEON.state().v) === 5, 'состояние — схема v5');
 
     /* Переходим на таб «Бонусы»: кнопка лежит в скрытой панели, и клик по ней
        без переключения табов просто не прошёл бы (узел не виден). */

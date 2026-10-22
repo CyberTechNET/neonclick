@@ -447,8 +447,9 @@ function withDemo(src) {
         // overflow:hidden самой карточки.
         cards: [].slice.call(body.children).filter((e) => e.getBoundingClientRect().height > 0)
           .map((e) => ({ id: e.id, squash: e.scrollHeight - Math.round(e.getBoundingClientRect().height) })),
-        guild: box('guildCard'), raid: box('raidCard'),
+        guild: box('guildCard'), raid: box('raidCard'), vip: box('vipCard'),
         join: box('btnGuildJoin'), leave: box('btnGuildLeave'), redeem: box('btnRaidRedeem'),
+        vipBtn: box('btnVip'),
         stats: ['raidHonor', 'raidLife', 'raidBest', 'raidTries', 'raidEarned', 'raidWeek'].map(box),
         scrolls: body.scrollHeight > body.clientHeight + 1
       };
@@ -461,9 +462,19 @@ function withDemo(src) {
     ok2(gu.join.h >= 30 && gu.leave.h >= 30 && gu.redeem.h >= 30,
       vp.w + '×' + vp.h + ': тап-таргеты гильдии и обмена не мельче 30px',
       [gu.join.h, gu.leave.h, gu.redeem.h]);
+    ok2(gu.vip && gu.vip.w > 40 && gu.vipBtn && gu.vipBtn.h >= 30,
+      vp.w + '×' + vp.h + ': карточка VIP имеет реальную ширину, а её кнопка — таргет не мельче 30px',
+      [gu.vip && gu.vip.w, gu.vipBtn && gu.vipBtn.h]);
     ok2(gu.stats.every((s) => s && s.w > 0 && s.tx > 0 && !s.invisible),
       vp.w + '×' + vp.h + ': все рейдовые счётчики видимы и не пусты', gu.stats);
-    ok2(gu.cards.length === 2 && gu.cards.every((c) => c.squash <= 1),
+    /* Карточек в «Гильдии» трое: гильдия, рейд и VIP за честь (раздел 13e).
+       Число пинуется намеренно: молчаливое появление четвёртой карточки — это
+       ещё один проверочный день, а вот пропажа любой из трёх — это уехавшая
+       в кабинет фича. squash при этом остаётся <= 1: у карточки с рамкой в 1px
+       по кругу rect.height на 2 больше её же scrollHeight, поэтому -2 — норма
+       (измерено и на HEAD тоже), а вот положительное расхождение — признак
+       flex-сжатия, то есть срезанного низа. */
+    ok2(gu.cards.length === 3 && gu.cards.every((c) => c.squash <= 1),
       vp.w + '×' + vp.h + ': карточки «Гильдии» не сплющены — высота равна содержимому', gu.cards);
     await shot('10-guild-' + vp.w + 'x' + vp.h);
 
@@ -621,9 +632,11 @@ function withDemo(src) {
         docW: document.documentElement.scrollWidth, innerW: window.innerWidth,
         earned: vis('raidEarned'), note: vis('raidNote'), tier: vis('raidTier'),
         hint: vis('guildHint'), name: vis('guildName'),
+        vipNote: vis('vipNote'), vipCta: vis('vipCta'), vipState: vis('vipState'),
         empty: ['guildName', 'guildTag', 'guildState', 'guildRole', 'guildMult', 'raidWeek',
           'raidPending', 'raidPer', 'raidHonor', 'raidLife', 'raidBest', 'raidTries',
-          'raidTierHint', 'raidQuota', 'raidRedeemCta'].filter((id) => {
+          'raidTierHint', 'raidQuota', 'raidRedeemCta',
+          'vipUntil', 'vipHonor', 'vipCta', 'vipNote', 'vipState'].filter((id) => {
           const e = document.getElementById(id);
           return !e || !(e.textContent || '').trim();
         }).length
@@ -634,9 +647,11 @@ function withDemo(src) {
     ok2(tg.earned && tg.earned.ink && tg.earned.tx.indexOf(tg.cur) > -1,
       'тема "' + tid + '": заработок недели назван валютой темы и остался читаем',
       tg.earned && [tg.earned.tx, tg.cur]);
-    ok2(tg.note.ink && tg.tier.ink && tg.hint.ink && tg.name.ink,
-      'тема "' + tid + '": текст карточек не стал невидимым на фоне темы',
-      [tg.note.color, tg.tier.color, tg.hint.color, tg.name.color]);
+    ok2(tg.note.ink && tg.tier.ink && tg.hint.ink && tg.name.ink
+      && tg.vipNote.ink && tg.vipCta.ink && tg.vipState.ink,
+      'тема "' + tid + '": текст карточек — включая VIP — не стал невидимым на фоне темы',
+      [tg.note.color, tg.tier.color, tg.hint.color, tg.name.color,
+        tg.vipNote.color, tg.vipCta.color, tg.vipState.color]);
     await shot('11-guild-theme-' + tid);
     await page.click('.tab[data-tab="shop"]');
   }
@@ -652,7 +667,7 @@ function withDemo(src) {
          LocalStorage — новая поверхность персональных данных (её обязан бы
          назвать privacy-policy.md, а check-moderation-kit держит инвариант
          «к хранилищу — только через CFG.saveKey»), а поле в сейве — правка
-         схемы v4, которую задело бы слияние с «облаком»;
+         текущей схемы сейва, которую задело бы слияние с «облаком»;
      (в) не мешать игре: не наезжать на монету и не распускать страницу. */
   {
     const snap = () => page.evaluate(() => {

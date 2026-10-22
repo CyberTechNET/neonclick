@@ -242,6 +242,31 @@
           </div>
           <p class="raid__note" id="raidNote">Честь покупает время добычи &times;2 и никогда не выдаёт монет.</p>
         </section>
+
+        <!-- --- VIP за внутриигровую честь (раздел 13e в game.js) ---
+             ЭТО НЕ точка монетизации: платёжных окон моста здесь нет, реестра
+             плательщиков нет, монеты не создаются. Статус покупается честью,
+             которая копится из уже подтверждённого заработка, и отдаёт ВРЕМЯ
+             добычи ×2 — тот же вид награды, что у обмена чести и у рекламы.
+             Обмен чести (5 чести = 15 минут) VIP не трогает: закреп сообщества
+             обязан оставаться правдой дословно.
+             Числа в подписях подставляет renderVip() из CFG.vip, а не разметка:
+             тот же приём, что у рейда и риск-раунда. -->
+        <section class="vip" id="vipCard">
+          <div class="vip__head">
+            <span class="vip__ico">&#128081;</span>
+            <span class="vip__txt">
+              <b class="vip__title">VIP рейда</b>
+              <i class="vip__sub">осталось: <span id="vipUntil">&mdash;</span></i>
+            </span>
+            <span class="vip__state" id="vipState">не активен</span>
+          </div>
+          <div class="vip__row">
+            <span class="vip__have"><b id="vipHonor">0</b><i>честь</i></span>
+            <button class="buy buy--vip" id="btnVip" type="button" disabled><span id="vipCta">40 чести &middot; 7 суток</span></button>
+          </div>
+          <p class="vip__note" id="vipNote">Статус покупается честью рейда и отдаёт время добычи &times;2. Новых монет ни у кого не появится.</p>
+        </section>
       </div>
     </section>
   </div>

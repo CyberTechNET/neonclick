@@ -300,7 +300,9 @@ function mockOutsideBridge() {
   const rawSaved = w.localStorage.getItem(SAVE_KEY);
   ok(!!rawSaved, 'сейв появился в LocalStorage без явного вызова');
   const saved = JSON.parse(rawSaved || '{}');
-  ok(saved.v === 4 && saved.upAuto === 1 && saved.upClick === 1, 'схема сейва v4 и уровни записаны', saved);
+  ok(saved.v === 5 && saved.upAuto === 1 && saved.upClick === 1, 'схема сейва v5 и уровни записаны', saved);
+  ok(['vipUntil', 'vipDay'].every((k) => typeof saved[k] === 'number' && saved[k] >= 0),
+    'поля VIP лежат в сейве (иначе подпись v5 их не покрывает, а срок не переживёт рестарт)', saved);
   ok(['shares', 'shareDay', 'shareN'].every((k) => typeof saved[k] === 'number' && saved[k] >= 0),
     'поля репоста действительно лежат в сейве (иначе подпись v2 их не покрывает)', saved);
   ok(['riskDay', 'riskN', 'riskWins', 'riskLoss', 'riskBurned', 'rpStake', 'rpWon', 'rpIdx']
@@ -438,8 +440,8 @@ function mockOutsideBridge() {
   ok(/исчерпан/.test(c1.d.getElementById('toasts').textContent), 'игрок уведомлён об исчерпанном суточном лимите',
     c1.d.getElementById('toasts').textContent);
   ok(c1.d.getElementById('btnShare').classList.contains('is-spent'), 'карточка погасла: наград сегодня больше нет');
-  ok(C().v === 4, 'схема состояния — v4 (поля гильдии и рейда)');
-  ok(c1.w.NEON.pack().split('#')[0].split('|').length === 33, 'облачный пакет v4 — 33 поля', c1.w.NEON.pack());
+  ok(C().v === 5, 'схема состояния — v5 (поля VIP)');
+  ok(c1.w.NEON.pack().split('#')[0].split('|').length === 35, 'облачный пакет v5 — 35 полей', c1.w.NEON.pack());
 
   /* --- Миграция схемы: пакет v1 (12 полей) обязан читаться. Иначе у всех уже
          играющих прогресс в VK обнулился бы в момент обновления. --- */
@@ -451,11 +453,45 @@ function mockOutsideBridge() {
   ok(!!(unp && unp.v === 1 && unp.shares === 0 && Math.floor(unp.coins) === 800 && unp.upAuto === 2),
     'облачный пакет v1 распакован без потерь (shares=0 — репостов ещё не было)', unp);
   ok(c1.w.NEON.unpack(v1Body + '#deadbeef') === null, 'пакет v1 с неверной подписью отклонён');
-  ok(c1.w.NEON.unpack('5|1|2|3#' + fnv1aHex(SIGN_SALT_STR + '#5|1|2|3')) === null,
+  ok(c1.w.NEON.unpack('6|1|2|3#' + fnv1aHex(SIGN_SALT_STR + '#6|1|2|3')) === null,
     'пакет чужой (будущей) версии схемы отклонён: подпись верна, не устраивает именно версия');
   ok(c1.w.NEON.unpack('3|1|2|3#' + fnv1aHex(SIGN_SALT_STR + '#3|1|2|3')) === null,
     'пакет известной версии с неверной длиной отклонён: v3 — это 23 поля, а не 4');
-  ok(c1.w.NEON.unpack(seen) !== null, 'собственный пакет v4 проходит свою же проверку', seen);
+  ok(c1.w.NEON.unpack(seen) !== null, 'собственный пакет v5 проходит свою же проверку', seen);
+
+  /* --- Сквозной round-trip собственной сборки -----------------------------
+     Строкой выше этот блок начинался как «unpack(seen) !== null». Такой проверки
+     не хватает ровно на один класс ошибок: она ловит ОТКАЗ пакета, но молчит про
+     нули на его месте. Так и дожил до публикации баг схемы v4 — хвост гильдии
+     прочитали условием isV4, а выражения выше остались «isV2 || isV3» и «isV3»,
+     и собственный v4-пакет перестал узнавать поля репоста и риск-раунда:
+     unpack возвращал осмысленный объект с нулями. Нули — это не «сейв не читается»,
+     это «прогресс тихо сел»: shares входит в plausibleCap() как shareMax, поэтому
+     вместе с репостами срезался и потолок законного прогресса честного игрока.
+     Отсюда форма проверки: сравниваем ПОЛЯ, а не факт возврата не-null. --- */
+  {
+    const RT = {
+      coins: 5000, total: 9000, clicks: 1234, upClick: 7, upAuto: 11,
+      boostUntil: Date.now() + 300000, watched: 5, susp: 2,
+      t0: Date.now() - 86400000, lastSeen: Date.now() - 1000,
+      shares: 3, shareDay: 20748, shareN: 2,
+      riskDay: 20748, riskN: 1, riskWins: 4, riskLoss: 2, riskBurned: 200,
+      rpStake: 0, rpWon: 0, rpIdx: 1,
+      gid: 242457640, gState: 1, rdWeek: 0, rdEarned: 4000, rdHonor: 30,
+      rdBest: 12, rdTries: 5, rdLife: 60, rdRedeemed: 20748, rdRedN: 1,
+      vipUntil: Date.now() + 7 * 86400000, vipDay: 20748
+    };
+    const S0 = c1.w.NEON.state();
+    const snap = Object.assign({}, S0);
+    RT.rdWeek = c1.w.NEON.raid().now;      // журнал ведётся ТЕКУЩЕЙ неделей: чужой rdWeek sanitize не режет, но и правды в нём нет
+    Object.assign(S0, RT);
+    const back = c1.w.NEON.unpack(c1.w.NEON.pack());
+    const lost = Object.keys(RT).filter((k) => !back || back[k] !== RT[k])
+      .map((k) => k + ': ' + RT[k] + ' \u2192 ' + (back ? back[k] : 'null'));
+    ok(back !== null && lost.length === 0,
+      'round-trip v5: каждое записанное поле возвращается без потерь, а не только «пакет не отброшен»', lost);
+    Object.assign(S0, snap);               // состояние c1 дальше по файлу живое — возвращаем как было
+  }
 
   /* --- v2 (15 полей) тоже обязан читаться: именно такие пакеты лежат в VK у
          всех, кто играл до выхода риск-раунда. Поля раунда берутся нулями —
@@ -489,6 +525,34 @@ function mockOutsideBridge() {
     && unp3.rdEarned === 0 && unp3.rdLife === 0 && unp3.rdRedeemed === 0),
     'у пакета v3 нет ни гильдии, ни чести: поля рейда нулевые, а не выдуманные',
     unp3 && [unp3.gid, unp3.gState, unp3.rdWeek, unp3.rdHonor, unp3.rdLife]);
+  /* --- v4 (33 поля) — ПРЯМОЙ регресс на баг, уехавший в публикацию.
+         Когда появилась v4, хвост гильдии прочитали условием isV4, а два
+         выражения выше остались «isV2 || isV3» и «isV3»: собственный v4-пакет
+         перестал узнавать поля репоста и риск-раунда и распаковывал их нулями.
+         Проверялось это только «unpack(seen) !== null» — ловит отказ, но молчит
+         про нули. Поэтому здесь пакет v4 с НЕНУЛЕВЫМИ полями всех предыдущих
+         версий: потеря любого из них краснит проверку ниже. --- */
+  const v4Body = '4' + v2Body.slice(1) + '|' + [
+    20748, 1, 4, 2, 200, 0, 0, 1,          // риск-раунд (8): nonzero — иначе потеря не видна
+    242457640, 1, c1.w.NEON.raid().now, 500, 30, 12, 5, 60, 20748, 1   // гильдия и рейд (10)
+  ].join('|');
+  const v4Pack = v4Body + '#' + fnv1aHex(SIGN_SALT_STR + '#' + v4Body);
+  const unp4 = c1.w.NEON.unpack(v4Pack);
+  ok(!!(unp4 && unp4.v === 4 && v4Body.split('|').length === 33),
+    'облачный пакет v4 (33 поля) распакован', unp4 && [unp4.v, v4Body.split('|').length]);
+  ok(!!(unp4 && unp4.shares === 3 && unp4.shareDay === 20743 && unp4.shareN === 2),
+    'КРИТИЧНО: v4-пакет не потерял репосты — именно здесь баг v4 обнулял shares/shareDay/shareN',
+    unp4 && [unp4.shares, unp4.shareDay, unp4.shareN]);
+  ok(!!(unp4 && unp4.riskWins === 4 && unp4.riskLoss === 2 && unp4.riskBurned === 200 && unp4.rpIdx === 1),
+    'КРИТИЧНО: v4-пакет не потерял риск-раунд — именно здесь баг v4 обнулял шесть его полей',
+    unp4 && [unp4.riskWins, unp4.riskLoss, unp4.riskBurned, unp4.rpIdx]);
+  ok(!!(unp4 && unp4.gid === 242457640 && unp4.gState === 1 && unp4.rdHonor === 30 && unp4.rdLife === 60
+    && unp4.rdBest === 12 && unp4.rdTries === 5 && unp4.rdRedN === 1),
+    'и поля самой v4 — гильдия с рейдом — доехали целиком',
+    unp4 && [unp4.gid, unp4.gState, unp4.rdHonor, unp4.rdLife, unp4.rdBest, unp4.rdTries, unp4.rdRedN]);
+  ok(!!(unp4 && unp4.vipUntil === 0 && unp4.vipDay === 0),
+    'у пакета v4 нет VIP: поля нулевые, а не выдуманный срок',
+    unp4 && [unp4.vipUntil, unp4.vipDay]);
   c1.dom.window.close();
 
   /* --- Подпись сейва зависит от ВЕРСИИ ДАННЫХ, а не от версии кода: иначе
@@ -505,8 +569,8 @@ function mockOutsideBridge() {
   const m1d = mockBridge({ fill: true, type: 'success' });
   const c1d = await makeGame({ url: VK_URL, vkBridge: m1d, seed: v1Save });
   ok(c1d.w.NEON.state().susp === 0, 'сейв v1 с подписью v1 НЕ помечен повреждённым', c1d.w.NEON.state().susp);
-  ok(Math.floor(c1d.w.NEON.state().coins) === 800 && c1d.w.NEON.state().v === 4,
-    'прогресс v1 переехал в v4 без потерь', [Math.floor(c1d.w.NEON.state().coins), c1d.w.NEON.state().v]);
+  ok(Math.floor(c1d.w.NEON.state().coins) === 800 && c1d.w.NEON.state().v === 5,
+    'прогресс v1 переехал в v5 без потерь', [Math.floor(c1d.w.NEON.state().coins), c1d.w.NEON.state().v]);
   ok(c1d.w.NEON.state().riskBurned === 0 && c1d.w.NEON.state().rpStake === 0,
     'у мигрировавшего v1 нет ни сгоревших монет, ни незакрытого раунда', c1d.w.NEON.risk());
   ok(c1d.w.NEON.state().gid === 0 && c1d.w.NEON.state().gState === 0 && c1d.w.NEON.state().rdHonor === 0,
@@ -528,11 +592,11 @@ function mockOutsideBridge() {
   const m2d = mockBridge({ fill: true, type: 'success' });
   const c2d = await makeGame({ url: VK_URL, vkBridge: m2d, seed: v2Save });
   ok(c2d.w.NEON.state().susp === 0, 'сейв v2 с подписью v2 НЕ помечен повреждённым', c2d.w.NEON.state().susp);
-  ok(Math.floor(c2d.w.NEON.state().coins) === 800 && c2d.w.NEON.state().shares === 3 && c2d.w.NEON.state().v === 4,
-    'прогресс v2 переехал в v4 без потерь (репосты целы)',
+  ok(Math.floor(c2d.w.NEON.state().coins) === 800 && c2d.w.NEON.state().shares === 3 && c2d.w.NEON.state().v === 5,
+    'прогресс v2 переехал в v5 без потерь (репосты целы)',
     [Math.floor(c2d.w.NEON.state().coins), c2d.w.NEON.state().shares, c2d.w.NEON.state().v]);
   ok(c2d.w.NEON.unpack(c2d.w.NEON.pack()) !== null,
-    'пакет, собранный v4-кодом с мигрировавшим v2, читается самим же v4', c2d.w.NEON.pack());
+    'пакет, собранный v5-кодом с мигрировавшим v2, читается самим же v5', c2d.w.NEON.pack());
   c2d.dom.window.close();
 
   /* --- v3 (22 поля подписи) — САМЫЙ ВАЖНЫЙ кейс аддитивности: именно эти сейвы
@@ -555,8 +619,8 @@ function mockOutsideBridge() {
   const c3d = await makeGame({ url: VK_URL, vkBridge: m3d, seed: v3Save });
   const V3 = () => c3d.w.NEON.state();
   ok(V3().susp === 0, 'сейв v3 с подписью v3 НЕ помечен повреждённым (хвост v4 добавлен в конец)', V3().susp);
-  ok(V3().v === 4 && Math.floor(V3().coins) === 800 && V3().riskWins === 4 && Math.floor(V3().riskBurned) === 200,
-    'прогресс v3 переехал в v4 без потерь (сток риск-раунда цел)',
+  ok(V3().v === 5 && Math.floor(V3().coins) === 800 && V3().riskWins === 4 && Math.floor(V3().riskBurned) === 200,
+    'прогресс v3 переехал в v5 без потерь (сток риск-раунда цел)',
     [V3().v, Math.floor(V3().coins), V3().riskWins, Math.floor(V3().riskBurned)]);
   ok(V3().gid === 0 && V3().gState === 0 && V3().rdHonor === 0 && V3().rdBest === 0 && V3().rdLife === 0,
     'рейдовые поля мигрировавшего v3 начались с нуля, а не с нарисованной чести',
@@ -564,8 +628,11 @@ function mockOutsideBridge() {
   ok(V3().rdEarned === 0,
     'журнал недели у мигрировавшего v3 пуст: прошлый заработок не стал честью задним числом',
     V3().rdEarned);
-  ok(c3d.w.NEON.pack().split('#')[0].split('|').length === 33,
-    'пакет v4 после миграции из v3 — 33 поля', c3d.w.NEON.pack());
+  ok(V3().vipUntil === 0 && V3().vipDay === 0,
+    'у мигрировавшего v3 нет VIP: поля нулевые, а не выдуманный срок',
+    [V3().vipUntil, V3().vipDay]);
+  ok(c3d.w.NEON.pack().split('#')[0].split('|').length === 35,
+    'пакет v5 после миграции из v3 — 35 полей', c3d.w.NEON.pack());
   c3d.dom.window.close();
 
   // 8.2 — нет заполнения: награда НЕ выдаётся
@@ -1299,7 +1366,7 @@ function mockOutsideBridge() {
     ok(A().rdHonor <= A().rdLife, '11.7 после слияния честь по-прежнему ограничена пожизненной',
       [A().rdHonor, A().rdLife]);
     ok(A().rdEarned === 900, '11.7 журнал одной недели берётся большим, а не сложением', A().rdEarned);
-    ok(A().v === 4, '11.7 версия схемы после слияния — текущая, а не победителя', A().v);
+    ok(A().v === 5, '11.7 версия схемы после слияния — текущая, а не победителя', A().v);
 
     devA.w.NEON.merge(packB, true);                   // побеждает приехавший B
     ok(A().gid === 222 && A().gState === 2,
@@ -1350,6 +1417,92 @@ function mockOutsideBridge() {
       && D.getElementById('raidWeek').textContent !== '—',
       '11.8 обратный отчёт до закрытия недели идёт', D.getElementById('raidWeek').textContent);
     ud.dom.window.close();
+
+    // 11.9 — VIP за внутриигровую честь (раздел 13e).
+    {
+      const vd = await makeGame({ seed: seedV4({ coins: 3000, total: 3000, upClick: 1, rdHonor: 100, rdLife: 100 }) });
+      const V = vd.w.NEON, D9 = vd.d;
+      V.switchTab('guild');
+
+      ok(!!D9.getElementById('vipCard') && !!D9.getElementById('btnVip'),
+        '11.9 карточка VIP есть в разметке');
+      ok(V.vip().active === false && V.vip().until === 0,
+        '11.9 без покупки VIP нет: until=0, а не выдуманный срок', V.vip());
+      ok(D9.getElementById('btnVip').disabled === false,
+        '11.9 при чести выше цены кнопка активна', V.vip());
+
+      const coins9 = Math.floor(V.state().coins);
+      ok(V.buyVip() === true, '11.9 срок куплен');
+      ok(V.state().rdHonor === 100 - V.vip().cost,
+        '11.9 честь списана ровно на цену срока', [100, V.state().rdHonor]);
+      ok(Math.floor(V.state().coins) === coins9,
+        '11.9 КРИТИЧНО (инвариант 1 раздела 13d): покупка не тронула монеты ни прибылью, ни списанием',
+        [coins9, Math.floor(V.state().coins)]);
+      ok(V.vip().active === true && V.vip().left > (V.vip().days - 1) * 86400000,
+        '11.9 срок активен и равен CFG.vip.days суток', V.vip());
+      ok(V.vip().boost >= Date.now() + V.vip().dailyMs - 10000,
+        '11.9 первый день выдан сразу: буст продлён не меньше чем на CFG.vip.dailyMs', V.vip());
+      ok(D9.getElementById('guildCard').classList.contains('is-vip'),
+        '11.9 значок статуса сел на карточку гильдии', D9.getElementById('guildCard').className);
+      ok(D9.getElementById('guildState').textContent !== 'Участник ✓',
+        '11.9 VIP не притворяется членством в гильдии: статус — отдельная строка',
+        D9.getElementById('guildState').textContent);
+
+      /* Суточная выдача идемпотентна по vipDay, а не по случаю: тик идёт 5 раз
+         в секунду, и без этого игра отдала бы 30 минут буста каждые 200 мс. */
+      ok(V.backVipDay(0) === false,
+        '11.9 те же сутки второй раз не выдают', V.vip());
+      const b1 = V.vip().boost;
+      ok(V.backVipDay(1) === true, '11.9 наступление новых суток выдаёт дневной буст');
+      const b2 = V.vip().boost;
+      ok(b2 - b1 === V.vip().dailyMs,
+        '11.9 выдача равна РОВНО CFG.vip.dailyMs: половинчатой выдачи не бывает',
+        [b1, b2, b2 - b1, V.vip().dailyMs]);
+
+      /* Доезжаем до края maxBoostAheadMs и проверяем, что сутки НЕ списываются.
+         Обратный выбор — списать и обрезать — был бы тихим отъёмом награды. */
+      V.backVipDay(1);
+      const atCap = V.vip();
+      ok(atCap.boost <= Date.now() + 90 * 60000 + 2000,
+        '11.9 буст не уехал за край maxBoostAheadMs', atCap.boost);
+      ok(V.backVipDay(1) === false,
+        '11.9 на краю края выдача не состоялась', V.vip());
+      V.state().boostUntil = 0;                          // освобождаем край
+      ok(V.backVipDay(1) === true,
+        '11.9 освобождение края догоняет отложенную выдачу тех же суток: награда не сгорела',
+        V.vip());
+
+      /* Отказ при нехватке чести не имеет права тронуть уже купленный срок. */
+      V.state().rdHonor = V.vip().cost - 1;
+      const untilBefore = V.vip().until;
+      ok(V.buyVip() === false, '11.9 не хватает чести — покупки нет');
+      ok(V.vip().until === untilBefore,
+        '11.9 отказ не тронул уже купленный срок', [untilBefore, V.vip().until]);
+
+      /* Античит: нарисованный срок режется потолком по rdLife, а не принимается. */
+      const forged = Date.now() + 3650 * 86400000;        // десять лет
+      V.state().rdLife = 100;
+      V.state().vipUntil = forged;
+      const un9 = V.unpack(V.pack());
+      const ceil9 = Date.now() + (Math.floor(100 / V.vip().cost) + 1) * V.vip().days * 86400000;
+      ok(!!un9 && un9.vipUntil <= ceil9 + 2000,
+        '11.9 нарисованный срок срезан потолком по rdLife, а не принят',
+        [forged, un9 && un9.vipUntil, ceil9]);
+      vd.dom.window.close();
+
+      /* Слияние двух устройств: срок — максимумом, как boostUntil. Сумма плодила бы
+         VIP из ничего, а «у победителя» теряла бы купленный на другом устройстве. */
+      const mA = await makeGame({ seed: seedV4({ coins: 3000, total: 3000, rdLife: 100, vipUntil: Date.now() + 3 * 86400000, vipDay: 20740 }) });
+      const mB = await makeGame({ seed: seedV4({ coins: 3000, total: 3000, rdLife: 100, vipUntil: Date.now() + 9 * 86400000, vipDay: 20745 }) });
+      const MA = () => mA.w.NEON.state();
+      mA.w.NEON.merge(mB.w.NEON.pack(), false);            // побеждает локальный A
+      ok(MA().vipUntil >= Date.now() + 9 * 86400000 - 60000,
+        '11.9 срок при слиянии берётся максимумом, а не у победителя', MA().vipUntil);
+      ok(MA().vipUntil < Date.now() + 12.5 * 86400000,
+        '11.9 и не суммой: 3 суток + 9 суток не стали 12', MA().vipUntil);
+      mA.dom.window.close();
+      mB.dom.window.close();
+    }
   }
 
   /* -------- СЦЕНАРИЙ 12. БОЕВЫЕ LAUNCH-ПАРАМЕТРЫ VK --------

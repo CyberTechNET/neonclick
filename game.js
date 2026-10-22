@@ -103,6 +103,18 @@
       ]
     },
 
+    // ★ VIP ЗА ВНУТРИИГРОВУЮ ЧЕСТЬ (досье §6.4). НЕ точка монетизации: платёжных
+    //   окон моста здесь нет, реестра плательщиков нет, бумаг не касается ни одна
+    //   строка. Из трёх маршрутов §6.4 это единственный, где реестр принадлежит
+    //   нам: у Donut и у прямых покупок реестр чужой, и цена ему — переписанная
+    //   публичная политика плюс повторная заявка.
+    //   Границы те же три, что у рейда (раздел 13d), и подробности — в 13e.
+    vip: {
+      cost: 40,                       // честь, списываемая за один срок
+      days: 7,                        // суток статуса за одну покупку
+      dailyMs: 30 * 60 * 1000         // буста ×2 в сутки, пока статус активен
+    },
+
     // Офлайн-доход
     offline: { minMs: 30 * 1000, capMs: 2 * 60 * 60 * 1000, efficiency: 0.5 },
 
@@ -461,6 +473,9 @@
     raidTries: $('raidTries'), raidTier: $('raidTier'), raidTierHint: $('raidTierHint'),
     raidTierBar: $('raidTierBar'), raidQuota: $('raidQuota'),
     btnRaidRedeem: $('btnRaidRedeem'), raidRedeemCta: $('raidRedeemCta'), raidNote: $('raidNote'),
+    // --- VIP (раздел 13e) ---
+    vipCard: $('vipCard'), vipState: $('vipState'), vipUntil: $('vipUntil'),
+    vipHonor: $('vipHonor'), vipNote: $('vipNote'), btnVip: $('btnVip'), vipCta: $('vipCta'),
     modal: $('modal'), modalTitle: $('modalTitle'), modalText: $('modalText'),
     modalOk: $('modalOk'), modalCancel: $('modalCancel'),
     btnSound: $('btnSound'), btnReset: $('btnReset'), toasts: $('toasts'),
@@ -492,13 +507,12 @@
    * mergeCloud(): номер схемы, записанный в сейв/пакет, всегда должен быть
    * номером ТЕКУЩЕГО записывателя, а не приехавшим из старого облачного пакета.
    */
-  const SCHEMA_V = 4;
+  const SCHEMA_V = 5;
 
   function defaultState() {
     return {
-      // v:4 — схема добавила поля гильдии и недельного рейда (см. раздел 13d).
-      // Сейвы и облачные пакеты v1, v2 и v3 читаются по-прежнему:
-      // см. load(), unpackCloud().
+      // v:5 — схема добавила поля VIP (см. раздел 13e). Сейвы и облачные пакеты
+      // v1, v2, v3 и v4 читаются по-прежнему: см. load(), unpackCloud().
       v: SCHEMA_V,
       coins: 0,          // текущий баланс (внутри дробный — из-за пассивного дохода)
       total: 0,          // всего заработано (для рангов)
@@ -533,6 +547,11 @@
       rdLife: 0,         // монотонный: всего чести заработано за всё время (по нему — звание)
       rdRedeemed: 0,     // индекс суток UTC последнего обмена чести
       rdRedN: 0,         // сколько обменов в эти сутки (лимитер CFG.raid.perDay)
+      // --- VIP (раздел 13e). Оба поля — НЕ валюта: vipUntil это срок, а не
+      //     счётчик, и sanitize() считает ему потолок по rdLife, то есть по чести,
+      //     которую сначала надо заработать. ---
+      vipUntil: 0,       // timestamp окончания VIP; 0 = VIP никогда не покупался
+      vipDay: 0,         // индекс суток UTC последней дневной выдачи (идемпотентность)
       sound: true,
       t0: Date.now(),    // момент первого запуска — база для потолка правдоподобия
       susp: 0,           // число исправленных аномалий (тихий флаг античита)
@@ -654,6 +673,11 @@
       S.rdLife = num(d.rdLife, 0);
       S.rdRedeemed = Math.floor(num(d.rdRedeemed, 0));
       S.rdRedN = Math.floor(num(d.rdRedN, 0));
+      // Сейвы v4 и старше полей VIP не содержат: num() подставит 0, миграция
+      // мягкая — ровно тот же приём, что у рейда в v4. Выдуманный здесь срок
+      // стоил бы игроку привилегии, которую он не зарабатывал, и наоборот.
+      S.vipUntil = num(d.vipUntil, 0);
+      S.vipDay = Math.floor(num(d.vipDay, 0));
       S.sound = d.sound !== false;
       S.lastSeen = num(d.lastSeen, Date.now());
       S.t0 = num(d.t0, 0);
@@ -988,6 +1012,7 @@
     renderShareCta();
     renderRiskCta();
     renderRaid();
+    renderVip();
   }
 
   /** Салют по всему экрану сцены — для важных моментов. */
@@ -1159,6 +1184,9 @@
     // только при реальном расхождении rdWeek, поэтому на 5 тиках в секунду это
     // дешёвая проверка, а не начисление.
     tickRaid();
+    // Выдача VIP-дней — здесь же, а не по таймеру: тик один и тот же источник
+    // времени, что и у рейда, и идемпотентность обеспечена vipDay, а не случаем.
+    tickVip();
 
     render();
   }
@@ -2266,6 +2294,164 @@
   }
 
   /* ======================================================================
+   * 13e. VIP ЗА ВНУТРИИГРОВУЮ ЧЕСТЬ
+   *
+   * Досье §6.4 держит три маршрута и один признак — «чей реестр плательщиков».
+   * У Donut и у прямых покупок реестр чужой: цена ему — переписанная публичная
+   * политика, новый домен в allowlist релизного прогона и повторная заявка.
+   * Здесь реестр — собственный сейв, поэтому бумаг не тронут ни одной строкой,
+   * и это единственная причина, по которой VIP вообще возможен.
+   *
+   * ГРАНИЦЫ — те же три, что у рейда, и каждая закрыта кодом, а не обещанием:
+   *
+   *  1. ВТОРОГО КРАНА ВАЛЮТЫ НЕТ. VIP не начисляет ни монет, ни чести: честь на
+   *     срок списывается из уже заработанного остатка (rdHonor), а срок отдаёт
+   *     время. earn() и grant() отсюда не вызываются ни разу, и это проверяется
+   *     тестом, а не комментарием.
+   *  2. НАГРАДА — ВРЕМЯ, а не множитель. CFG.boost.mult не тронут. Это не
+   *     формальность: plausibleCap() считает пассивный потолок из расчёта
+   *     ПОСТОЯННО включённого ×2, поэтому дополнительные минуты буста в уже
+   *     посчитанный потолок умещаются, а поднятый множитель вывел бы честного
+   *     игрока за границу и отнял бы у него монеты молча. Клика буст не касается
+   *     вовсе (clickPower() множителя не знает), так что активная часть дохода
+   *     остаётся при своих.
+   *  3. ПОДДЕЛКА БЕСПЛАТНА РОВНО НАСКОЛЬКО БЕСПЛАТЕН СЕЙВ. vipUntil — бит в
+   *     клиентском сейве, devtools правит его так же легко, как любой другой.
+   *     Принято осознанно: накручивать нечего, кроме собственного времени добычи,
+   *     ограниченного тем же maxBoostAheadMs, что у рекламы, а sanitize() режет
+   *     срок по rdLife — то есть по чести, которую сначала надо заработать.
+   *     Тот же вывод, из-за которого гильдия не получила общий счёт (13d).
+   *
+   * Чего здесь СОЗНАТЕЛЬНО нет: ускорения обмена чести, повышения guildMult,
+   * прибавки к freeCoinsReward и всякого «vip-магазина». Любое из них либо
+   * трогает потолок правдоподобия, либо делает закреп сообщества половинчатой
+   * ложью (сторож — check-copy [8], множества чисел).
+   * ==================================================================== */
+
+  const VIP = CFG.vip;
+  const DAY_MS = 86400000;
+
+  /** Активен ли VIP в данный момент. 0 в vipUntil — «никогда не покупался». */
+  function vipActive(now) { return (S.vipUntil || 0) > (now || Date.now()); }
+
+  /** Сколько осталось до конца срока, мс. */
+  function vipLeft(now) { return Math.max(0, (S.vipUntil || 0) - (now || Date.now())); }
+
+  /** Причина не покупать VIP или null. Единая — чтобы кнопка и подсказка не расходились. */
+  function vipBlock() {
+    if (Math.floor(S.rdHonor || 0) < VIP.cost) return 'poor';
+    return null;
+  }
+
+  /** Остаток срока человекочитаемо: «7 сут 02 ч», «5 ч 12 мин», «12 мин». */
+  function fmtVipLeft(ms) {
+    const t = Math.max(0, Math.floor(ms / 60000));            // минуты
+    const d = Math.floor(t / 1440), h = Math.floor((t % 1440) / 60), m = t % 60;
+    if (d > 0) return d + ' сут ' + (h < 10 ? '0' : '') + h + ' ч';
+    if (h > 0) return h + ' ч ' + (m < 10 ? '0' : '') + m + ' мин';
+    return m + ' мин';
+  }
+
+  /**
+   * Дневная выдача времени буста. Идемпотентна по суткам UTC — тот же приём,
+   * что у rdRedeemed/rdRedN и shareDay/shareN: тик идёт 5 раз в секунду, и без
+   * vipDay игра выдала бы 30 минут буста каждые 200 мс.
+   *
+   * Выдача бывает ТОЛЬКО целой. Если до края maxBoostAheadMs не помещается весь
+   * CFG.vip.dailyMs, сутки НЕ списываем и возвращаем 0: выдача повторится
+   * следующим тиком, как только край освободится. Половинчатый вариант — отдать
+   * что влезло и списать день — это тихий отъём награды, тот же класс ошибки,
+   * от которого защищаются в 13c и в raidRedeemBlock; игрок, топчущий буст на
+   * пределе, потерял бы сутки молча. Край освобождается сам: boostUntil зафиксирован,
+   * t растёт, и как только t > boostUntil − dailyMs, выдача целиком умещается —
+   * а на худший конец, буст однажды истекает вовсе и from становится равно t.
+   * @param {number} [now]
+   * @returns {number} выданные миллисекунды буста: либо ровно CFG.vip.dailyMs,
+   *                   либо 0 — если не выдавали
+   */
+  function grantVipDay(now) {
+    const t = now || Date.now();
+    if (!vipActive(t)) return 0;
+    const day = dayIndex(t);
+    if ((S.vipDay || 0) === day) return 0;                     // за эти сутки уже выдали
+    const from = Math.max(t, S.boostUntil || 0);
+    if (from + VIP.dailyMs > t + CFG.anticheat.maxBoostAheadMs) return 0;   // целая не влезла
+    S.boostUntil = from + VIP.dailyMs;
+    S.vipDay = day;
+    dirty = true;
+    return VIP.dailyMs;
+  }
+
+  /** Обслуживание VIP тиком. Дорого лишь в ветке выдачи: остальное — два сравнения. */
+  function tickVip() {
+    const added = grantVipDay();
+    if (added <= 0) return false;
+    save(true);
+    cloudPush(true);
+    toast('👑 VIP: +' + Math.round(added / 60000) + ' мин добычи ×2', 'good', 3800);
+    return true;
+  }
+
+  /**
+   * Покупка срока за честь. Монет не трогает (граница 1), время буста продлевает
+   * через тот же край maxBoostAheadMs, что реклама, ва-банк и обмен чести.
+   * @returns {boolean} true — срок куплен.
+   */
+  function buyVip() {
+    settleRaid();                                    // сначала закрываем истёкшую неделю
+    const block = vipBlock();
+    if (block === 'poor') {
+      sfx.deny();
+      toast('Нужно ' + VIP.cost + ' чести, сейчас ' + fmt(Math.floor(S.rdHonor || 0)), 'warn', 3600);
+      renderVip();
+      return false;
+    }
+    const now = Date.now();
+    S.rdHonor -= VIP.cost;                           // сток престижа, не валюты
+    S.vipUntil = Math.max(now, S.vipUntil || 0) + VIP.days * DAY_MS;
+    // Первый день отдаём тем же механизмом, что и последующие, а не отдельной
+    // веткой: если буст уже на пределе, vipDay останется не проставлен и тик
+    // догонит выдачу сам. Иначе покупка молча съела бы первые сутки.
+    grantVipDay(now);
+    dirty = true;
+    save(true);
+    cloudPush(true);
+    render();
+    sfx.reward();
+    if (window.VK) VK.haptic('success');
+    const c = stageCenter();
+    floatText(c.x, c.y, 'VIP', 'crit');
+    burst(c.x, c.y, 40, PAL_CRIT, 2);
+    toast('👑 VIP на ' + VIP.days + ' суток: добыча ×2 каждый день по '
+      + Math.round(VIP.dailyMs / 60000) + ' мин', 'good', 5000);
+    return true;
+  }
+
+  /** Панель VIP. Вызывается из render() 5 раз в секунду, DOM трогаем по изменению. */
+  function renderVip() {
+    if (!el.vipState) return;
+    const now = Date.now();
+    const on = vipActive(now);
+    const honor = Math.floor(S.rdHonor || 0);
+
+    setText(el.vipState, on ? 'VIP активен' : 'не активен');
+    setText(el.vipUntil, on ? fmtVipLeft(vipLeft(now)) : '—');
+    setText(el.vipHonor, fmt(honor));
+    if (el.vipCard) el.vipCard.classList.toggle('is-on', on);
+    // Значок на карточке гильдии — вся «социальная» награда статуса: он виден
+    // игроку, но не даёт ни привилегии в гильдии, ни права на общий счёт
+    // (инвариант 3 раздела 13d: роль — справка от VK, а не купленная отметка).
+    if (el.guildCard) el.guildCard.classList.toggle('is-vip', on);
+
+    if (el.btnVip) el.btnVip.disabled = !!vipBlock();
+    setText(el.vipCta, VIP.cost + ' чести · ' + VIP.days + ' суток');
+    setText(el.vipNote, on
+      ? 'Каждые сутки статус добавляет ' + Math.round(VIP.dailyMs / 60000)
+        + ' мин добычи ×2. Монет VIP не выдаёт.'
+      : 'Статус покупается честью рейда и отдаёт время добычи ×2. Честь расходуется та же, что и на обмен: новых монет ни у кого не появится.');
+  }
+
+  /* ======================================================================
    * 14. UI: ТАБЫ, ЗВУК, СБРОС ПРОГРЕССА
    * ==================================================================== */
 
@@ -2396,6 +2582,7 @@
       });
     }
     if (el.btnRaidRedeem) el.btnRaidRedeem.addEventListener('click', () => { redeemHonor(); });
+    if (el.btnVip) el.btnVip.addEventListener('click', () => { buyVip(); });
 
     el.btnSound.addEventListener('click', toggleSound);
     el.btnReset.addEventListener('click', confirmReset);
@@ -2499,6 +2686,10 @@
       fields.push(d.gid, d.gState, d.rdWeek, d.rdEarned, d.rdHonor,
         d.rdBest, d.rdTries, d.rdLife, d.rdRedeemed, d.rdRedN);
     }
+    // v:5 — хвост VIP. СНОВА ДОБАВЛЯЕТСЯ в конец. Тот же класс ошибки, что и
+    // выше: каждый существующий сейв v4 при первом запуске обновления получил бы
+    // расхождение подписи и молча приписал себе нарушение susp.
+    if (Number(d.v) >= 5) fields.push(d.vipUntil, d.vipDay);
     return fnv1a(SIGN_SALT + '|' + fields.join(','));
   }
 
@@ -2590,6 +2781,18 @@
     d.rdTries = Math.floor(clamp(d.rdTries, 0, 1e6));
     d.rdRedeemed = Math.floor(clamp(d.rdRedeemed, 0, 1e7));
     d.rdRedN = Math.floor(clamp(d.rdRedN, 0, CFG.raid.perDay));  // больше лимита в сутки быть не может
+    // --- VIP (раздел 13e) ---
+    // Порядок ВАЖЕН: блок идёт ПОСЛЕ рейдового, потому что опирается на
+    // окончательное d.rdLife, и ПОСЛЕ потолка правдоподобия — по той же причине.
+    // Потолок срока ВЫВОДИТСЯ из уже подтверждённой чести: купить срок можно
+    // только за честь, а всей чести, когда-либо заработанной, не больше rdLife.
+    // Значит и сроков куплено не больше floor(rdLife / cost). +1 — на случай
+    // «купили прямо сейчас», когда списание ещё не отразилось в остатке.
+    // Нарисованный VIP-срок из будущего здесь срезается, а не пересчитывается.
+    const vipBuys = Math.floor((d.rdLife || 0) / Math.max(1, CFG.vip.cost)) + 1;
+    const vipCeil = now + vipBuys * CFG.vip.days * 86400000;
+    d.vipUntil = clamp(d.vipUntil, 0, vipCeil);
+    d.vipDay = Math.floor(clamp(d.vipDay, 0, 1e7));
     return fixes;
   }
 
@@ -2682,7 +2885,10 @@
       Math.floor(d.gid || 0), Math.floor(d.gState || 0), Math.floor(d.rdWeek || 0),
       Math.floor(d.rdEarned || 0), Math.floor(d.rdHonor || 0), Math.floor(d.rdBest || 0),
       Math.floor(d.rdTries || 0), Math.floor(d.rdLife || 0),
-      Math.floor(d.rdRedeemed || 0), Math.floor(d.rdRedN || 0)
+      Math.floor(d.rdRedeemed || 0), Math.floor(d.rdRedN || 0),
+      // v:5 — хвост VIP (2 поля, всего 35). Снова в КОНЕЦ: порядок старых 33 не
+      // двигается, иначе лежащие в VK пакеты v4 стали бы нечитаемыми.
+      Math.floor(d.vipUntil || 0), Math.floor(d.vipDay || 0)
     ].join('|');
     return body + '#' + fnv1a(SIGN_SALT + '#' + body);
   }
@@ -2696,33 +2902,53 @@
     if (fnv1a(SIGN_SALT + '#' + body) !== str.slice(at + 1)) return null;  // подмена или обрезка VK
     const p = body.split('|');
     const n = p.map(Number);
-    // backward compatibility: v1 — 12 полей, v2 — 15. Новый код ОБЯЗАН читать
-    // пакеты старой версии, иначе у всех уже играющих прогресс в VK станет
-    // нечитаемым («сбросился в ноль» на глазах у игрока).
-    const isV1 = p.length === 12 && n[0] === 1;
-    const isV2 = p.length === 15 && n[0] === 2;
-    const isV3 = p.length === 23 && n[0] === 3;
-    const isV4 = p.length === 33 && n[0] === 4;
-    if (!isV1 && !isV2 && !isV3 && !isV4) return null;        // чужая версия схемы
+    /* backward compatibility: v1 — 12 полей, v2 — 15. Новый код ОБЯЗАН читать
+       пакеты старой версии, иначе у всех уже играющих прогресс в VK станет
+       нечитаемым («сбросился в ноль» на глазах у игрока).
+
+     * СХЕМА ЧТЕНИЯ — КУМУЛЯТИВНАЯ, и это не стиль, а исправление живого бага.
+     * Пакет vN несёт ВСЕ поля версий ниже vN на тех же местах, поэтому поле
+     * читается условием «версия >= минимальной», а не «версия == моей».
+     *
+     * Как здесь оказался баг: с появлением v4 хвост гильдии прочитали условием
+     * isV4, а выражения выше — «isV2 || isV3» и «isV3» — оставить забыли. Для
+     * собственного v4-пакета оба ложны, значит поля репоста и риск-раунда
+     * читались нулями. Проверено прогоном по боевой сборке 22.10.2026:
+     * shares/shareDay/shareN и шесть полей риск-раунда терялись при КАЖДОМ
+     * чтении облака. Монетой потеря не была, но shares входит в plausibleCap()
+     * как shareMax, поэтому вместе с ним срезался и потолок правдоподобия —
+     * то есть у честного игрока молча уменьшался максимум законного прогресса.
+     *
+     * Почему форма ниже защищена от повтора: новая версия добавляет РОВНО одну
+     * строку в LEN, и ни одно условие чтения менять не нужно. Прошлый вариант
+     * требовал вспомнить про каждое из трёх выражений — и не вспомнил. */
+    const LEN = { 1: 12, 2: 15, 3: 23, 4: 33, 5: 35 };
+    const ver = n[0];
+    if (LEN[ver] !== p.length) return null;             // чужая версия схемы
     if (n.some((x) => !isFinite(x) || x < 0)) return null;
+    const has = (min) => ver >= min;
     const d = {
       v: n[0], coins: n[1], total: n[2], clicks: n[3], upClick: n[4], upAuto: n[5],
       boostUntil: n[6], watched: n[7], sound: n[8] === 1, susp: n[9], t0: n[10],
       lastSeen: n[11], sig: '',
-      shares: (isV2 || isV3) ? n[12] : 0, shareDay: (isV2 || isV3) ? n[13] : 0, shareN: (isV2 || isV3) ? n[14] : 0,
+      shares: has(2) ? n[12] : 0, shareDay: has(2) ? n[13] : 0, shareN: has(2) ? n[14] : 0,
       // Пакет v3 привозит незакрытый раунд. Из v1/v2 взять нечего — 0, «раунда
       // нет»: потеря возврата при апдейте через старое облако предпочтительнее,
       // чем выдуманный возврат.
-      riskDay: isV3 ? n[15] : 0, riskN: isV3 ? n[16] : 0, riskWins: isV3 ? n[17] : 0,
-      riskLoss: isV3 ? n[18] : 0, riskBurned: isV3 ? n[19] : 0,
-      rpStake: isV3 ? n[20] : 0, rpWon: isV3 ? n[21] : 0, rpIdx: isV3 ? n[22] : 0,
+      riskDay: has(3) ? n[15] : 0, riskN: has(3) ? n[16] : 0, riskWins: has(3) ? n[17] : 0,
+      riskLoss: has(3) ? n[18] : 0, riskBurned: has(3) ? n[19] : 0,
+      rpStake: has(3) ? n[20] : 0, rpWon: has(3) ? n[21] : 0, rpIdx: has(3) ? n[22] : 0,
       // Пакет v4 привозит гильдию и рейд. Из v1/v2/v3 взять нечего — 0: «вне
       // гильдии, неделя ещё не ведётся». Выдуманная здесь принадлежность или
       // начисленная честь стоили бы игроку привилегии, которой он не зарабатывал.
-      gid: isV4 ? n[23] : 0, gState: isV4 ? n[24] : 0, rdWeek: isV4 ? n[25] : 0,
-      rdEarned: isV4 ? n[26] : 0, rdHonor: isV4 ? n[27] : 0, rdBest: isV4 ? n[28] : 0,
-      rdTries: isV4 ? n[29] : 0, rdLife: isV4 ? n[30] : 0,
-      rdRedeemed: isV4 ? n[31] : 0, rdRedN: isV4 ? n[32] : 0
+      gid: has(4) ? n[23] : 0, gState: has(4) ? n[24] : 0, rdWeek: has(4) ? n[25] : 0,
+      rdEarned: has(4) ? n[26] : 0, rdHonor: has(4) ? n[27] : 0, rdBest: has(4) ? n[28] : 0,
+      rdTries: has(4) ? n[29] : 0, rdLife: has(4) ? n[30] : 0,
+      rdRedeemed: has(4) ? n[31] : 0, rdRedN: has(4) ? n[32] : 0,
+      // Пакет v5 привозит VIP. Из v1..v4 взять нечего — 0: «VIP не покупался».
+      // Нарисованный здесь срок стоил бы привилегии, которой игрок не зарабатывал,
+      // и это же ограничение держится второй защитой — потолком по rdLife в sanitize().
+      vipUntil: has(5) ? n[33] : 0, vipDay: has(5) ? n[34] : 0
     };
     sanitize(d);
     return d;
@@ -2799,6 +3025,15 @@
     const rdd = win.rdRedeemed || 0, odd = other.rdRedeemed || 0;
     if (odd > rdd) { next.rdRedeemed = odd; next.rdRedN = other.rdRedN || 0; }
     else { next.rdRedN = Math.max(win.rdRedN || 0, odd === rdd ? (other.rdRedN || 0) : 0); }
+    // --- VIP (раздел 13e) ---
+    // Срок — как boostUntil: он продлевается покупками и потому берётся МАКСИМУМОМ,
+    // а не у победителя. Худший исход — игрок, купивший срок на двух устройствах
+    // в один момент, получит один срок; обратный выбор (сумма) наплодил бы VIP из
+    // ничего, и это ровно тот класс ошибки, из-за которого гильдия не получила
+    // общий счёт. vipDay — индекс суток выдачи: max может только подавить
+    // повторную выдачу за уже выданные сутки, но не выдать лишнего.
+    next.vipUntil = Math.max(win.vipUntil || 0, other.vipUntil || 0);
+    next.vipDay = Math.max(win.vipDay || 0, other.vipDay || 0);
     // Версия схемы — ТЕКУЩАЯ. Поле v приехало из пакета победителя, и если это
     // старый v1/v2/v3, S получил бы старый номер, а packCloud пишет полный набор
     // полей v4: на выходе вышел бы пакет «1|…от 33 полей», который unpackCloud
@@ -3049,6 +3284,29 @@
         },
         settleRaid: () => settleRaid(),
         redeemHonor: () => redeemHonor(),
+        /* --- VIP (только под ?debug=1, как и весь хук) ---------------------
+           Суточная выдача — событие масштаба 24 часов: вызвать его «живьём»
+           невозможно, поэтому тесты обязаны уметь отмотать vipDay назад и
+           упереться в край maxBoostAheadMs. Таймстампы отдаются через
+           Math.floor, а не |0: |0 обрезает int64-дату до int32 и врёт. */
+        vip: () => ({
+          until: Math.floor(S.vipUntil || 0), day: Math.floor(S.vipDay || 0),
+          active: vipActive(), left: vipLeft(), block: vipBlock(),
+          boost: Math.floor(S.boostUntil || 0), honor: Math.floor(S.rdHonor || 0),
+          cost: VIP.cost, days: VIP.days, dailyMs: VIP.dailyMs
+        }),
+        buyVip: () => buyVip(),
+        /** Отматывает vipDay на n суток назад и отдаёт тик: имитация прошедших суток. */
+        backVipDay: (n) => {
+          /* Явный isFinite, а не `Number(n) || 1`: ноль — ОСМЫСЛЕННЫЙ аргумент
+             («откатить на нуль суток», то есть проверить идемпотентность тех же
+             суток), а `|| 1` молча превращал его в единицу и выдавал буст там,
+             где тест ждал отказа. Тот же приём, что у advanceWeek, но там 0 и не
+             был законным входом. */
+          const k = Math.floor(Number(n));
+          S.vipDay = Math.max(0, dayIndex() - (Number.isFinite(k) ? k : 1));
+          return tickVip();
+        },
         selectGuild: (id) => selectGuild(id),
         joinGuild: () => joinGuild(),
         leaveGuild: () => leaveGuild(),
