@@ -71,6 +71,13 @@ const FOREIGN = ['package.json', 'package-lock.json', 'README.md', '.gitignore',
   // Материалы для сообщества — тоже репозиторные: это тексты для подписчиков
   // (закреп, ответы в комментариях), а не то, что должен отдавать хостинг игры.
   'assets/community/guild-launch.md',
+  // Внешние каналы: черновики постов для Telegram/Dzen и журнал замеров. Наружу
+  // ездит то, что опубликовано в самих каналах, а не эти файлы — хостинг игры не
+  // обязан отдавать ни черновик, ни бухгалтерию прироста. Список держит не человек:
+  // npm run check:kit выводит требование из содержимого дерева assets/, поэтому
+  // новый файл здесь падает проверкой, а не живёт незамеченным.
+  'assets/marketing/telegram.md', 'assets/marketing/dzen.md',
+  'assets/marketing/channel-log.md',
   '.smoke-test.cjs', '.vk-mock-check.cjs', '.stress-check.cjs', '.visual-check.cjs',
   'base_smoke.txt', 'base_vk.txt', 'base_release.txt',
   'node_modules/jsdom/package.json', '_site/index.html', '.git/config'];

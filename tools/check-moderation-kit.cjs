@@ -30,11 +30,12 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const KIT = path.join(ROOT, 'assets', 'moderation');
 
-const DISTORTIONS = ['keys', 'methods', 'domain', 'reset', 'foreign', 'pub', 'lost', 'geom', 'limit'];
+const DISTORTIONS = ['keys', 'methods', 'domain', 'reset', 'foreign', 'pub', 'lost', 'geom', 'limit', 'eol'];
 const DISTORT = String(process.env.NEON_KIT_DISTORT || '').toLowerCase();
 if (DISTORT && !DISTORTIONS.includes(DISTORT)) {
   console.error('NEON_KIT_DISTORT должен быть одним из: ' + DISTORTIONS.join(', '));
@@ -426,6 +427,23 @@ console.log('\n[7] Комплект не ездит наружу — кроме 
   ok(unenumerated.length === 0,
     'каждый файл под assets/ назван в FOREIGN боевого прогона: ' + assetFiles.length + ' шт.',
     unenumerated);
+  /* Гигиена окончаний строк. .gitattributes объявляет «* text eol=lf», и это дерево
+     его нарушало: средство записи на Windows кладёт в новый файл CRLF, git при
+     core.autocrlf=true нормализует его на лету, и расхождение не видно нигде — ни в
+     git status (файл «изменён», diff пуст), ни в сторожах, режущих текст по \r?\n.
+     Заметить его способно только двойное контролирование по дословной мишени, и ровно
+     так 22.10.2026 мишень не нашлась, а шесть PNG были перезаписаны как текст при
+     попытке это исправить руками (отчёт 2026-10-22-external-corpus).
+     Требование выводится вопросом к git, а не повторением атрибутов: второй список
+     правил переживает правку .gitattributes молча — и врёт. */
+  let eolOut = (spawnSync('git', ['ls-files', '--eol'], { cwd: ROOT, encoding: 'utf8' }).stdout || '');
+  if (DISTORT === 'eol') eolOut = eolOut.replace(/i\/lf(\s+)w\/lf/, 'i/lf$1w/crlf');
+  const eolText = eolOut.split('\n').filter((l) => /(^|\s)attr\/[^ ]*text/.test(l));
+  /* Страж самого стража: пустой ответ git (не тот каталог, git отсутствует, права)
+     сделал бы следующую проверку зелёной на любом дереве. */
+  ok(eolText.length > 0, 'git отвечает об окончаниях строк: текстовых путей в индексе ' + eolText.length, eolText.length);
+  const eolBad = eolText.filter((l) => /(^|\s)w\/crlf(\s|$)/.test(l)).map((l) => l.trim().split(/\s+/).pop());
+  ok(eolBad.length === 0, 'ни один текстовый файл не лежит с CRLF вопреки .gitattributes', eolBad);
   ok(!/application\.md|icon-\d+\.png|screen-(?:neon|meme|sat|bonus|guild)\.png/.test(builderTxt),
     'ни досье, ни иконок, ни кадров сборщик не видит');
   if (fs.existsSync(ARTIFACT_DIR)) {

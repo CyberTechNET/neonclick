@@ -25,24 +25,55 @@ const ROOT = path.resolve(__dirname, '..');
    её тем же правилом значит требовать от документа немой грамоты. */
 const COMM = 'assets/community/guild-launch.md';
 const GAME = 'game.js';
+const TG = 'assets/marketing/telegram.md';
+const DZ = 'assets/marketing/dzen.md';
+const RELC = '.release-check.cjs';
 const spoken = (t) => t.split(/\r?\n/)
   .filter((l) => /^\s*>/.test(l) || /^\s*\|/.test(l)).join('\n');
 
-/* Литеральные проверки сторожа работают по тексту, очищенному от разметки цитаты и
-   схлопнутому по пробелам (проза переносится по ширине, и «> » между словами одной
-   фразы ломает includes()). Препарат контроля обязан собирать тот же препарат, что и
-   сторож: расхождение здесь и там означало бы, что контроль меряет не то, что
-   меряет сторож, и «живость» была бы артефактом разной обработки. */
-const flat = (t, pubOnly) => {
+/* Препараты собраны ровно теми же функциями, что и сторож (flatOf / sectionsOf в
+   tools/check-copy.cjs, на уровне модуля). Контроль, обрабатывающий текст иначе, чем
+   сторож, доказывает живость другого сторожа, а не этого: расхождение в обработке
+   выглядит как «проверка жива» ровно до того прогона, когда обоим попадётся перенос
+   строки или маркер «> » посреди фразы. */
+const flat = (t, stopRe) => {
   const L = t.split(/\r?\n/);
-  const h7 = pubOnly ? L.findIndex((l) => /^##\s*7\./.test(l)) : -1;
-  return L.slice(0, h7 >= 0 ? h7 : L.length)
+  const at = stopRe ? L.findIndex((l) => stopRe.test(l)) : -1;
+  return L.slice(0, at >= 0 ? at : L.length)
     .filter((l) => /^\s*>/.test(l) || /^\s*\|/.test(l))
     .map((l) => l.replace(/^\s*>\s?/, ''))
     .join(' ').replace(/\s+/g, ' ').trim();
 };
-const pubFlat = (t) => flat(t, true);
-const allFlat = (t) => flat(t, false);
+const pubFlat = (t) => flat(t, /^##\s*7\./);
+const allFlat = (t) => flat(t, null);
+/* Разрез внешних текстов на самостоятельные единицы измерения — тот же, что у
+   сторожа, включая гранулярность, объявленную самим файлом. */
+const META = /^##\s*\d+\.\s*(Откуда цифры|Что здесь запрещено)/;
+const sectionsOf = (t, skipRe) => {
+  const L = t.split(/\r?\n/);
+  const at = L.map((l, i) => (/^##\s*\d+\./.test(l) ? i : -1)).filter((i) => i >= 0);
+  const out = [];
+  for (let k = 0; k < at.length; k++) {
+    if (skipRe && skipRe.test(L[at[k]])) continue;
+    const to = k + 1 < at.length ? at[k + 1] : L.length;
+    const text = L.slice(at[k], to).join('\n');
+    if (/\S/.test(spoken(text))) out.push({ title: L[at[k]].replace(/^##\s*\d+\.\s*/, '').trim(), text });
+  }
+  return out;
+};
+const unitsOf = (t) => {
+  const gran = ((/^[ \t]*Текст:[ \t]*(.+)$/m).exec(t) || [, ''])[1].trim();
+  const secs = sectionsOf(t, META);
+  return gran === 'весь файл'
+    ? (secs.length ? [{ title: 'весь файл', text: secs.map((s) => s.text).join('\n') }] : [])
+    : secs;
+};
+const HARD = /удач|испыт|джекпот|разбогат|на деньги|приз\s+(ден|руб)|рубл|налич|донат|оплат/i;
+const EV_RE = [
+  [/не более \d+ раунд(?:а|ов) в сутки/i, 'потолок раундов'],
+  [/проигранное сгорает|проигрыш сгорает/i, 'сгорание'],
+  [/матожидание отрицательное/i, 'матожидание'],
+];
 /* Срез раздела 13e — тот же, что в стороже: границы берутся поиском, а не номерами
    строк, иначе правка выше сдвинула бы их и сделала контроль слепым. */
 const vipSection = (t) => t.slice(t.indexOf('const VIP = CFG.vip;'), t.indexOf('14. UI:'));
@@ -358,6 +389,121 @@ const GUARDS = [
     mut: [/const block = vipBlock\(\);/,
       'const block = vipBlock();\n    VK.showPaymentDialog({ amount: 99 }); // donut'],
     rule: (t) => !/payment|donut|invoice|VKWebAppOrder/i.test(vipSection(t)),
+  },
+
+  /* ---- группа [9]: assets/marketing/ ----
+     Внешний текст мерится по самостоятельной единице (гранулярность объявлена самим
+     файлом), поэтому контролем служит не только подмена числа по всему файлу, но и
+     вырезание раскрытия из ОДНОГО поста: именно так наружу уезжает пост без
+     матожидания, соседний с постом, где оно сказано. Первый контроль ниже — ровно
+     этот случай; файловая проверка на нём проходила бы зелёным. */
+  {
+    name: 'telegram: вырезанное матожидание из одного поста видно (пост уезжает один)',
+    file: TG,
+    mut: [/Матожидание отрицательное: раунд[\s\S]*?на ранг не влияет\./, ''],
+    rule: (t) => unitsOf(t).every((s) => {
+      const f = flat(s.text);
+      return !/выигр|проигр/i.test(spoken(s.text)) || EV_RE.every(([re]) => re.test(f));
+    }),
+  },
+  {
+    name: 'dzen: вырезанное матожидание из лонгрида видно',
+    file: DZ,
+    mut: [/Матожидание отрицательное, и это не оговорка[\s\S]*?ни шкалу\n> «всего заработано»\./, ''],
+    rule: (t) => unitsOf(t).every((s) => {
+      const f = flat(s.text);
+      return !/выигр|проигр/i.test(spoken(s.text)) || EV_RE.every(([re]) => re.test(f));
+    }),
+  },
+  {
+    name: 'telegram: вставленное «испытай удачу» видно',
+    file: TG,
+    mut: [/> ⚡ \*\*NEON CLICK\*\* \(18\+\) — кликер, который живёт внутри VK\./,
+      '> ⚡ **NEON CLICK** (18+) — испытай удачу в неоновом кликере.'],
+    rule: (t) => unitsOf(t).every((s) => !HARD.test(flat(s.text))),
+  },
+  {
+    name: 'dzen: вставленная «доля удачи» видна',
+    file: DZ,
+    mut: [/Основное действие — тап по неоновой монете\./, 'Основное действие — тап по неоновой монете и доля удачи.'],
+    rule: (t) => unitsOf(t).every((s) => !HARD.test(flat(s.text))),
+  },
+  {
+    name: 'telegram: пропажа 18+ из одного поста видна',
+    file: TG,
+    mut: [/> ⚡ \*\*NEON CLICK: за что тут «честь»\*\* \(18\+\)/, '> ⚡ **NEON CLICK: за что тут «честь»**'],
+    rule: (t) => unitsOf(t).every((s) => /18\+/.test(spoken(s.text)) || /18\+/.test(flat(s.text))),
+  },
+  {
+    name: 'telegram: адрес хостинга как вход виден',
+    file: TG,
+    mut: [/> Играть: \*\*https:\/\/vk\.com\/app54839632_-242457640\*\* — или вступить в сообщество/,
+      '> Играть: **https://cybertechnet.github.io/neonclick/index.html** — или вступить в сообщество'],
+    rule: (t) => !/github\.io|githubpages|cybertechnet/i.test(spoken(t)),
+  },
+  {
+    name: 'telegram: отозванный номер карточки виден',
+    file: TG,
+    mut: [/app54839632/g, 'app54836005'],
+    rule: (t) => {
+      const c = [...new Set([...spoken(t).matchAll(/app(\d{6,})/g)].map((m) => m[1]))];
+      return c.length === 1 && c[0] === '54839632';
+    },
+  },
+  {
+    name: 'telegram: зов в чужое сообщество виден',
+    file: TG,
+    mut: [/club242457640/g, 'club999888'],
+    rule: (t) => {
+      const c = [...new Set([...spoken(t).matchAll(/club(\d{4,})/g)].map((m) => m[1]))];
+      return c.length === 1 && c[0] === '242457640';
+    },
+  },
+  {
+    name: 'telegram: потолок раундов — это CFG.risk.perDay',
+    file: TG,
+    mut: [/3 раундов в сутки/g, '5 раундов в сутки'],
+    rule: (t) => {
+      const s = [...new Set([...allFlat(t).matchAll(/(\d+)\s*раунд(?:а|ов)\s*в\s*сутки/g)].map((m) => m[1]))];
+      return s.length === 1 && s[0] === '3';
+    },
+  },
+  {
+    name: 'telegram: ставки — это CFG.risk.stakes (подмена 100% на 200% видна)',
+    file: TG,
+    mut: [/25\/50\/100%/g, '25/50/200%'],
+    rule: (t) => {
+      const s = [...new Set([...allFlat(t).matchAll(/(\d+\/\d+\/\d+)%/g)].map((m) => m[1]))];
+      return s.length === 1 && s[0] === '25/50/100';
+    },
+  },
+  {
+    name: 'telegram: цена и срок VIP — пара из CFG.vip',
+    file: TG,
+    mut: [/40 чести · 7 суток/g, '40 чести · 9 суток'],
+    rule: (t) => {
+      const s = [...new Set([...allFlat(t).matchAll(/(\d+)\s*чести\s*·\s*(\d+)\s*суток/g)].map((m) => m[1] + '/' + m[2]))];
+      return s.length === 1 && s[0] === '40/7';
+    },
+  },
+  {
+    name: 'telegram: монеты перестали быть виртуальными — видно',
+    file: TG,
+    mut: [/монеты виртуальные/gi, 'монеты за рубли'],
+    rule: (t) => /монеты виртуальные/i.test(allFlat(t)),
+  },
+  {
+    name: 'telegram: роль текста объявлена из известного списка',
+    file: TG,
+    mut: [/^Роль: копия$/m, 'Роль: черновик'],
+    rule: (t) => /^[ \t]*Роль:[ \t]*(копия|журнал)$/m.test(t),
+  },
+  {
+    name: 'release: черновик внешних каналов, не названный в FOREIGN, виден',
+    file: RELC,
+    mut: [/'assets\/marketing\/telegram\.md',\s*/, ''],
+    rule: (t) => ['telegram.md', 'dzen.md', 'channel-log.md']
+      .every((f) => t.includes("'assets/marketing/" + f + "'")),
   },
 
 ];
