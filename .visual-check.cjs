@@ -292,15 +292,48 @@ function withDemo(src) {
      плашка буста в кошельке) диск расползался ровно туда.
      Меряется на двух табах — «Магазин» (самая низкая панель) и «Бонусы» (самая
      высокая): сцена между ними различается на сотню пикселей, и именно на
-     «Бонусах» запаса раньше не хватало. */
+     «Бонусах» запаса раньше не хватало.
+
+     Второй конец той же палки — жалоба 22.10.2026: «кнопка для клика слишком
+     большая, надо вписать её между двумя модулями». Диск, растущий до краёв
+     полосы (58vw/236px на 390×844 и 412×915, на планшете), переставал быть
+     кнопкой и читался как плита. Первый проход по этой жалобе (42vw/168px) дела не
+     изменил: он резал ширину, а высоты полосы не касался, поэтому на 375×667 диск
+     ушёл со 157px на 150px. Теперь дисциплинированы оба конца: потолок ширины и 76%
+     высоты контентной области сцены. Поэтому здесь же, рядом с запретом на наезд,
+     стоит запрет на разрастание: золотой круг обязан оставаться вписанным —
+     с воздухом до кошелька и панели и не шире потолка над полосой. Без этой
+     половины любая следующая правка «увеличь кликабельность» вернёт плиту, и
+     никто этого не заметит: наезд на соседей такие числа не трогают. */
   const RING_BLEED = 0.07;                 // .coin__ring: inset −7% + 2px рамки
+  const MIN_GAP = 12;                      // воздух дисками до соседних модулей
+  const MAX_DIAM = 152;                    // потолок диаметра: 144px на широкой колонке + запас
+  const MAX_SHARE = 0.6;                   // диск не шире 60% ширины полосы
+  const MIN_AIR_V = 6;                     // воздух диска по вертикали внутри сцены
   async function clearance(vp, where) {
-    const c = await page.evaluate((bleed) => {
+    const c = await page.evaluate((m) => {
       const box = (s) => { const e = document.querySelector(s); return e ? e.getBoundingClientRect() : null; };
       const live = (s) => { const e = document.querySelector(s); return !!e && getComputedStyle(e).display !== 'none'; };
       const cross = (a, b) => !!a && !!b && a.top < b.bottom && b.top < a.bottom && a.left < b.right && b.left < a.right;
+      /* Расстояние между двумя коробками по той оси, по которой они разделены:
+         в портрете кошелёк и панель стоят над/под диском, в повёрнутом телефоне
+         панель уходит в правую колонку — там вертикальная разница отрицательная
+         и мерить зазор по ней смысла нет. По осям берётся максимум: у пересекающихся
+         по одной оси коробок она даёт 0, и остаётся вторая, настоящая. */
+      const sep = (a, b) => {
+        if (!a || !b) return Infinity;
+        const dy = Math.max(b.top - a.bottom, a.top - b.bottom, 0);
+        const dx = Math.max(b.left - a.right, a.left - b.right, 0);
+        return Math.round(Math.max(dx, dy));
+      };
       const coin = box('#coin'), hint = box('.hint'), tabs = box('.tabs'), stage = box('#stage');
-      const p = Math.round(coin.width * bleed) + 2;
+      const wallet = box('.wallet'), panel = box('.panel');
+      /* Контентная область сцены: её высота и есть 100cqh. Диск обязан оставлять
+         в ней воздух по вертикали — иначе он вписан в полосу вплотную и читается
+         не кнопкой, а дном полосы (см. 76cqh в .coin). */
+      const scs = getComputedStyle(document.querySelector('#stage'));
+      const contentH = stage.height - parseFloat(scs.paddingTop) - parseFloat(scs.paddingBottom);
+      const p = Math.round(coin.width * m.bleed) + 2;
       const aura = { top: coin.top - p, bottom: coin.bottom + p, left: coin.left - p, right: coin.right + p };
       const mid = document.elementFromPoint(Math.round(coin.left + coin.width / 2), Math.round(coin.top + coin.height / 2));
       const tb = box('.tab[data-tab="bonus"]');
@@ -308,6 +341,8 @@ function withDemo(src) {
       const onHint = live('.hint') ? document.elementFromPoint(Math.round(hint.left + hint.width / 2), Math.round(hint.top + hint.height / 2)) : null;
       return {
         coin: Math.round(coin.width) + '×' + Math.round(coin.height),
+        airV: Math.round(contentH - coin.height),
+        contentH: Math.round(contentH),
         disk: Math.abs(coin.width - coin.height) <= 1 && Math.round(coin.width) >= 64,
         inStage: coin.top >= stage.top - 1 && coin.bottom <= stage.bottom + 1 &&
           coin.left >= stage.left - 1 && coin.right <= stage.right + 1,
@@ -315,16 +350,30 @@ function withDemo(src) {
         tabHit: !!onTab && !!onTab.closest('.tabs'),
         hintHit: !live('.hint') || (!!onHint && !!onHint.closest('.hint')),
         overHint: live('.hint') && cross(aura, hint),
-        overTabs: cross(aura, tabs)
+        overTabs: cross(aura, tabs),
+        gapWallet: sep(coin, wallet), gapPanel: sep(coin, panel),
+        auraWallet: sep(aura, wallet), auraPanel: sep(aura, panel),
+        plate: Math.round(coin.width) > Math.min(m.maxDiam, stage.width * m.maxShare)
       };
-    }, RING_BLEED);
+    }, { bleed: RING_BLEED, maxDiam: MAX_DIAM, maxShare: MAX_SHARE });
     const t = vp.w + '×' + vp.h + ' [' + where + ']:';
     log('  зазор монеты:', JSON.stringify(c));
     ok2(c.disk, t + ' монета — диск (круг ≥64px), а не эллипс и не огрызок', c.coin);
+    ok2(c.airV >= MIN_AIR_V,
+      t + ' монета не распирает сцену по высоте: ≥' + MIN_AIR_V + 'px воздуха над и под ней',
+      { airV: c.airV, contentH: c.contentH, coin: c.coin });
     ok2(c.inStage && c.reachable && c.tabHit && c.hintHit,
       t + ' тап доходит и до монеты, и до таба «Бонусы», и до подсказки', c);
     ok2(!c.overHint && !c.overTabs,
       t + ' монета с кольцом не наезжает ни на подсказку, ни на таббар', c);
+    ok2(c.gapWallet >= MIN_GAP && c.gapPanel >= MIN_GAP,
+      t + ' монета вписана в полосу: воздух ≥' + MIN_GAP + 'px до кошелька и панели',
+      { gapWallet: c.gapWallet, gapPanel: c.gapPanel });
+    ok2(c.auraWallet >= 0 && c.auraPanel >= 0,
+      t + ' кольцо монеты не касается ни кошелька, ни панели',
+      { auraWallet: c.auraWallet, auraPanel: c.auraPanel });
+    ok2(!c.plate,
+      t + ' монета — кнопка, а не плита (≤' + MAX_DIAM + 'px и ≤' + Math.round(MAX_SHARE * 100) + '% ширины полосы)', c.coin);
     return c;
   }
 
@@ -476,6 +525,26 @@ function withDemo(src) {
     await clearance(vp, 'бонусы');
     await shot('10-bonus-' + vp.w + 'x' + vp.h);
     await page.click('.tab[data-tab="shop"]');
+  }
+
+  /* Полоса на занятом экране. Семь вьюпортов выше дают сцену высокую: там диск
+     режет потолок по ширине, и высотный предел (76cqh, вторая половина жалобы
+     22.10.2026) никогда не выбирается — то есть главный рычаг правки остался бы
+     без свидетеля и возврат к 100cqh прошёл бы молча. Ниже экран ужат до того,
+     что реально бывает в WebView VK: шапка приложения, плашка буста в кошельке и
+     полная лента «Бонусов» отъедают у сцены всё, кроме узкой полосы. */
+  for (const tight of [
+    { w: 390, h: 560, tag: 'WebView: шапка + буст' },
+    { w: 360, h: 520, tag: 'WebView мелкий: шапка + буст' }
+  ]) {
+    await page.setViewport({ width: tight.w, height: tight.h, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    await page.reload({ waitUntil: 'networkidle2' });
+    await page.waitForFunction(() => !!window.NEON, { timeout: 15000 });
+    await sleep(300);
+    await page.click('.tab[data-tab="bonus"]');
+    await sleep(250);
+    await clearance(tight, 'тесно');
+    await shot('10-tight-' + tight.w + 'x' + tight.h);
   }
 
   /* --- 11. ТЕМЫ: каждая собирается, реально красится и влезает в экран ---
