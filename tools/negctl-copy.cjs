@@ -24,8 +24,28 @@ const ROOT = path.resolve(__dirname, '..');
    запретах перечисляет запрещённые слова как список — это не обещание, и мерить
    её тем же правилом значит требовать от документа немой грамоты. */
 const COMM = 'assets/community/guild-launch.md';
+const GAME = 'game.js';
 const spoken = (t) => t.split(/\r?\n/)
   .filter((l) => /^\s*>/.test(l) || /^\s*\|/.test(l)).join('\n');
+
+/* Литеральные проверки сторожа работают по тексту, очищенному от разметки цитаты и
+   схлопнутому по пробелам (проза переносится по ширине, и «> » между словами одной
+   фразы ломает includes()). Препарат контроля обязан собирать тот же препарат, что и
+   сторож: расхождение здесь и там означало бы, что контроль меряет не то, что
+   меряет сторож, и «живость» была бы артефактом разной обработки. */
+const flat = (t, pubOnly) => {
+  const L = t.split(/\r?\n/);
+  const h7 = pubOnly ? L.findIndex((l) => /^##\s*7\./.test(l)) : -1;
+  return L.slice(0, h7 >= 0 ? h7 : L.length)
+    .filter((l) => /^\s*>/.test(l) || /^\s*\|/.test(l))
+    .map((l) => l.replace(/^\s*>\s?/, ''))
+    .join(' ').replace(/\s+/g, ' ').trim();
+};
+const pubFlat = (t) => flat(t, true);
+const allFlat = (t) => flat(t, false);
+/* Срез раздела 13e — тот же, что в стороже: границы берутся поиском, а не номерами
+   строк, иначе правка выше сдвинула бы их и сделала контроль слепым. */
+const vipSection = (t) => t.slice(t.indexOf('const VIP = CFG.vip;'), t.indexOf('14. UI:'));
 
 const GUARDS = [
   {
@@ -254,6 +274,90 @@ const GUARDS = [
       const s = [...new Set([...spoken(t).matchAll(/(\d+)\s*монет/g)].map((m) => m[1]))];
       return s.length === 1 && s[0] === '1000';
     },
+  },
+
+  /* ---- VIP: числа, подписи и границы раздела 13e ----
+     Три рода препаратов. Первые семь — подмена в корпусе: сторож сверяет пост с
+     CFG.vip, поэтому мёртв он будет ровно тогда, когда подменённое число пройдёт
+     незамеченным. Последние три — подмена уже в самой игре: эти сторожа меряют
+     качественные обещания («монет не даёт», «гильдию не трогает», «не оплата») по
+     срезу кода, и доказать их живость вырезанием из поста невозможно. Без них
+     нули в check-copy [8] оставались бы украшением: сторож, который не краснеет
+     на появившемся earn(), ничем не отличается от сторожа, которого нет. */
+  {
+    name: 'сообщество: цена VIP — это CFG.vip.cost',
+    file: COMM,
+    mut: [/40 чести · 7 суток/g, '60 чести · 7 суток'],
+    rule: (t) => allFlat(t).includes('40 чести · 7 суток'),
+  },
+  {
+    name: 'сообщество: срок VIP — это CFG.vip.days (пара чисел, а не одно)',
+    file: COMM,
+    mut: [/40 чести · 7 суток/g, '40 чести · 9 суток'],
+    rule: (t) => {
+      const s = [...new Set([...allFlat(t).matchAll(/(\d+)\s*чести\s*·\s*(\d+)\s*суток/g)]
+        .map((m) => m[1] + '/' + m[2]))];
+      return s.length === 1 && s[0] === '40/7';
+    },
+  },
+  {
+    name: 'сообщество: суточная выдача VIP — это CFG.vip.dailyMs',
+    file: COMM,
+    mut: [/30 мин добычи/g, '45 мин добычи'],
+    rule: (t) => {
+      const s = [...new Set([...allFlat(t).matchAll(/(\d+)\s*мин добычи/g)].map((m) => m[1]))];
+      return s.length === 1 && s[0] === '30';
+    },
+  },
+  {
+    name: 'сообщество: инвариант «новых монет не появится» сказан подписчику',
+    file: COMM,
+    mut: [/и новых монет[\s\S]*?> ни у кого не появится/, ''],
+    rule: (t) => pubFlat(t).includes('новых монет ни у кого не появится'),
+  },
+  {
+    name: 'сообщество: VIP назван статусом за честь, а не оплатой',
+    file: COMM,
+    mut: [/> \*\*Что даёт VIP рейда\.\*\*/, '> **Что даёт VIP рейда. Оплата картой.**'],
+    rule: (t) => !/оплат|платеж|платёж|донат|рубл|IAP|цена в деньгах/i.test(pubFlat(t)),
+  },
+  {
+    name: 'сообщество: состояния VIP названы теми же словами, что рисует игра',
+    file: COMM,
+    mut: [/«VIP активен»/g, '«VIP включён»'],
+    rule: (t) => ['VIP активен', 'не активен'].every((s) => t.includes(s)),
+  },
+  {
+    name: 'сообщество: §7 называет источники VIP, а не только его числа',
+    file: COMM,
+    cut: /\| `40 чести · 7 суток`[\s\S]*?платёжных окон моста \|\n/,
+    rule: (t) => t.includes('CFG.vip.cost') && t.includes('CFG.vip.dailyMs'),
+  },
+  {
+    name: 'игра: появление earn() в разделе 13e видно сторожу',
+    file: GAME,
+    mut: [/function buyVip\(\) \{/, 'function buyVip() {\n    earn(1000);'],
+    rule: (t) => {
+      const s = vipSection(t);
+      return s.length > 2000 && !/\bearn\s*\(|(?<![A-Za-z])grant\s*\(/.test(s);
+    },
+  },
+  {
+    name: 'игра: превращение VIP в гильдейскую привилегию видно сторожу',
+    file: GAME,
+    mut: [/if \(el\.guildCard\) el\.guildCard\.classList\.toggle\('is-vip', on\);/,
+      "if (el.guildCard) el.guildCard.classList.toggle('is-vip', on);\n    if (vipActive()) S.gState = 1; // guild-привилегия"],
+    rule: (t) => {
+      const L = t.split(/\r?\n/).filter((l) => /vip/i.test(l) && /guild/i.test(l));
+      return L.length === 1 && L.every((l) => /classList|is-vip/.test(l));
+    },
+  },
+  {
+    name: 'игра: появление платёжного окна в разделе 13e видно сторожу',
+    file: GAME,
+    mut: [/const block = vipBlock\(\);/,
+      'const block = vipBlock();\n    VK.showPaymentDialog({ amount: 99 }); // donut'],
+    rule: (t) => !/payment|donut|invoice|VKWebAppOrder/i.test(vipSection(t)),
   },
 
 ];

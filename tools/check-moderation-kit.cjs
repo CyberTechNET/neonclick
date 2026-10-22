@@ -397,16 +397,35 @@ console.log('\n[7] Комплект не ездит наружу — кроме 
      именам: досье, иконки и кадры должны краснеть, а политика — нет. */
   ok(/POLICY_MD = path\.join\('assets', 'moderation', 'privacy-policy\.md'\)/.test(builderTxt),
     'сборщик берёт из дерева модерации единственный исходник — политику');
-  /* Перечисление по именам обязано догонять папку. Статичный хостинг не отдаёт листинг
-     каталога, поэтому FOREIGN проверяет каждый файл комплекта отдельно — и любой
-     положенный в папку файл, не названный в этом списке, не проверяется ничем: ровно
-     так седьмой кадр прожил бы незамеченным. Проверка выведена из фактического
-     содержимого папки, а не из PNGS: она краснеет на файле, которого нет ни в одном
-     списке, — то есть на том, ради чего она написана. */
-  const kitPngs = fs.readdirSync(KIT).filter((f) => /\.png$/i.test(f)).sort();
-  const unenumerated = kitPngs.filter((f) => !releaseTxt.includes("'assets/moderation/" + f + "'"));
-  ok(kitPngs.length >= PNGS.length, 'боевой прогон видит папку модерации: PNG в ней ' + kitPngs.length, kitPngs.length);
-  ok(unenumerated.length === 0, 'каждый PNG комплекта назван в FOREIGN боевого прогона', unenumerated);
+  /* Перечисление по именам обязано догонять дерево. Статичный хостинг не отдаёт листинг
+     каталога, поэтому FOREIGN проверяет каждый файл отдельно — и любой положенный в
+     папку файл, не названный в этом списке, не проверяется ничем: ровно так седьмой
+     кадр прожил бы незамеченным. С 22.10.2026 проверка выведена из ВСЕГО дерева assets/,
+     а не только из PNG папки модерации: check-copy [8] держит
+     assets/community/guild-launch.md ровно одним именем, и второй пост в той же папке —
+     лендинг, баннер, черновик анонса — прожил бы незамеченным, а будущие
+     assets/marketing/* не покрыты сейчас ничем. Правило одно: что лежит под assets/,
+     наружу не ездит, значит FOREIGN обязан это знать. */
+  const ASSETS = path.join(ROOT, 'assets');
+  const assetFiles = [];
+  (function walk(dir, rel, acc) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const r = rel + e.name;
+      if (e.isDirectory()) walk(path.join(dir, e.name), r + '/', acc);
+      else acc.push(r);
+    }
+  })(ASSETS, 'assets/', assetFiles);
+  /* Страж самого стража: пустой обход (не тот путь, симлинк, права) сделал бы
+     следующую проверку зелёной на любом FOREIGN. Требуются две разные папки — ровно
+     те, что до обобщения проверялись по-отдельности и по именам. */
+  ok(assetFiles.includes('assets/moderation/icon-512.png')
+      && assetFiles.includes('assets/community/guild-launch.md'),
+    'обход дерева assets/ видит обе папки: и комплект модерации, и материалы сообщества',
+    assetFiles.length);
+  const unenumerated = assetFiles.filter((f) => !releaseTxt.includes("'" + f + "'"));
+  ok(unenumerated.length === 0,
+    'каждый файл под assets/ назван в FOREIGN боевого прогона: ' + assetFiles.length + ' шт.',
+    unenumerated);
   ok(!/application\.md|icon-\d+\.png|screen-(?:neon|meme|sat|bonus|guild)\.png/.test(builderTxt),
     'ни досье, ни иконок, ни кадров сборщик не видит');
   if (fs.existsSync(ARTIFACT_DIR)) {
