@@ -63,6 +63,9 @@ const FOREIGN = ['package.json', 'package-lock.json', 'README.md', '.gitignore',
   // Документы заявки перечислены явно, а не каталогом: статичный хостинг не отдаёт
   // список каталога, поэтому 'assets/moderation/' одной строкой проверял бы ничего.
   'assets/moderation/privacy-policy.md', 'assets/moderation/application.md',
+  // Материалы для сообщества — тоже репозиторные: это тексты для подписчиков
+  // (закреп, ответы в комментариях), а не то, что должен отдавать хостинг игры.
+  'assets/community/guild-launch.md',
   '.smoke-test.cjs', '.vk-mock-check.cjs', '.stress-check.cjs', '.visual-check.cjs',
   'base_smoke.txt', 'base_vk.txt', 'base_release.txt',
   'node_modules/jsdom/package.json', '_site/index.html', '.git/config'];
