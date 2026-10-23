@@ -11,6 +11,7 @@
     "check:copy": "node tools/check-copy.cjs",
     "check:negctl": "node tools/negctl-copy.cjs",
     "check:negctl:policy": "node tools/negctl-policy.cjs",
+    "guard": "node tools/check-copy.cjs && node tools/negctl-copy.cjs && node tools/negctl-policy.cjs && node tools/check-moderation-kit.cjs",
     "serve:release": "python -m http.server 5174 --directory _site",
     "test:smoke": "node .smoke-test.cjs",
     "test:vk": "node .vk-mock-check.cjs",
