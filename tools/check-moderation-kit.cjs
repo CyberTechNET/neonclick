@@ -17,7 +17,7 @@
  * состояние «ждёт человека» в отправку не выпускает.
  *
  * Негативный контроль. Сверки имели бы смысл только если они краснеют на битых
- * данных, поэтому NEON_KIT_DISTORT=keys|methods|domain|reset|foreign|pub|lost|geom|limit
+ * данных, поэтому NEON_KIT_DISTORT=keys|methods|domain|reset|foreign|pub|lost|geom|limit|eol
  * портит копию в памяти (файлы не трогаются) — и прогон обязан упасть. Штатный
  * запуск переменную не задаёт.
  *
