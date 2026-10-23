@@ -80,6 +80,27 @@ const EV_RE = [
    строк, иначе правка выше сдвинула бы их и сделала контроль слепым. */
 const vipSection = (t) => t.slice(t.indexOf('const VIP = CFG.vip;'), t.indexOf('14. UI:'));
 
+/* Список групп шапки и список печатаемых меток — зеркала проверки группы [11] в
+   tools/check-copy.cjs. Зеркалятся здесь, а не вызываются оттуда, по тому же правилу,
+   что flat/sectionsOf: контроль, понимающий текст иначе, чем сторож, мерит чужого
+   сторожа. Метки ищутся по console.log('\n[N] …', поэтому собственное регулярное
+   выражение сторожа в их число не попадает: там перед точкой стоит слэш. */
+const labelsOf = (t) => new Set([...t.matchAll(/console\.log\('\\n\[(\d+)\]/g)].map((m) => Number(m[1])));
+const headedOf = (t) => {
+  const head = t.slice(0, t.indexOf("'use strict'"));
+  const s = new Set();
+  for (const m of head.matchAll(/\[(\d+)\]\s*[–—-]\s*\[(\d+)\]/g)) {
+    for (let n = Number(m[1]); n <= Number(m[2]); n++) s.add(n);
+  }
+  for (const m of head.matchAll(/\[(\d+)\]/g)) s.add(Number(m[1]));
+  return s;
+};
+const groupsMatch = (t) => {
+  const a = labelsOf(t), b = headedOf(t);
+  return a.size > 0 && b.size > 0 &&
+    [...a].every((n) => b.has(n)) && [...b].every((n) => a.has(n));
+};
+
 const GUARDS = [
   {
     name: 'README: отсутствие приложения в списке установки сообщества',
@@ -547,6 +568,24 @@ const GUARDS = [
     file: CHK,
     mut: [/^ {4}const MEASURE = \[$/m, '    const MEASURE = [];const MEASURE_ROWS = ['],
     rule: (t) => /const MEASURE = \[\s*\n\s*\{ what:/.test(t),
+  },
+
+  /* ---- группа [11]: шапка сторожа против его собственных меток ----
+     Первый контроль убирает из шапки диапазон, второй — метку из кода. Нужны оба:
+     проверка двусторонняя, и контроль, бьющий только в одно направление, доказывал бы
+     живость половины сторожа. Мишень — сам tools/check-copy.cjs, поэтому препарат
+     подменяет в нём текст, а не в документе: бумага и машина здесь один файл. */
+  {
+    name: 'шапка: из неё убран диапазон [1]–[7] — печатаемые группы без объявления видны',
+    file: CHK,
+    mut: [/Группы \[1\]–\[7\]/, 'Группы [1]'],
+    rule: (t) => groupsMatch(t),
+  },
+  {
+    name: 'метка: группа переименована в коде — шапка обещает то, чего прогон не печатает',
+    file: CHK,
+    mut: [/console\.log\('\\n\[11\] /, "console.log('\\n[12] "],
+    rule: (t) => groupsMatch(t),
   },
 
 ];
