@@ -136,6 +136,12 @@ function cfgFacts(src) {
     if (!m) return die(what);
     return m[1].split(',').map((s) => s.trim()).filter(Boolean);
   };
+  /* Одиночное поле вне именованного блока (freeCoinsReward, share.reward): тем же
+     последним группы, что num, чтобы не заводить вторую манеру чтения. */
+  const one = (s, re, what) => {
+    const m = re.exec(s);
+    return m ? m[m.length - 1] : die(what);
+  };
   const raid = blk('raid', 'raid'), vipB = blk('vip', 'vip'),
         risk = blk('risk', 'risk'), crit = blk('crit', 'crit');
   const min = (s) => Math.round(product(s) / 60000);
@@ -158,6 +164,13 @@ function cfgFacts(src) {
     vipCost: num(vipB, 'cost', 'vip.cost'),
     vipDays: num(vipB, 'days', 'vip.days'),
     vipDailyMin: min((/dailyMs:\s*([0-9*\s]+?)(?:,|\n)/.exec(vipB) || [, ''])[1]),
+    /* Награды. Витрина называет их числами (§4 вариант А), а таблица меры [9] этих
+       полей не знала вовсе: пост, где кто-то напишет «+1500 монет за ролик», проходил
+       зелёным, потому что меряющий корпус список просто не включал награду. Поля
+       читаются здесь, а не в [9], потому что мера одна на два предмета — см. [10]. */
+    adReward: one(src, /freeCoinsReward:\s*(\d+)/, 'CFG.freeCoinsReward'),
+    shareReward: one(src, /share:\s*\{\s*reward:\s*(\d+)/, 'CFG.share.reward'),
+    sharePerDay: one(src, /share:\s*\{[^}]*perDay:\s*(\d+)/, 'CFG.share.perDay'),
   };
 }
 
@@ -246,6 +259,18 @@ const sectionsOf = (t, skipRe) => {
   }
   return out;
 };
+
+/** Роль внешнего текста, объявленная самим файлом (assets/marketing/*.md):
+ *  к журналу запреты копии не применяются, и мере это не повод начинать. */
+const roleOf = (t) => ((/^[ \t]*Роль:[ \t]*(\S+)/m).exec(t) || [, ''])[1].trim();
+
+/** Плоские тексты файлов, объявленных копией. Критерий тот же, что у [9], и
+ *  функция одна: [8] и [9] уже платили за вторую копию парсера, расходящуюся
+ *  молча и ровно там, где число уже напечатано. */
+const copyFlats = (dir) => fs.readdirSync(dir).filter((f) => /\.md$/i.test(f))
+  .map((f) => [f, readText(path.join(dir, f))])
+  .filter(([, t]) => roleOf(t) === 'копия')
+  .map(([, t]) => flatOf(t));
 
 
 /* --------------------------------------------------------------------------
@@ -927,7 +952,7 @@ console.log('\n[9] Внешние каналы обещают то, что де�
       'разделители CTA карточки VIP');
     const files = fs.readdirSync(MKT).filter((f) => /\.md$/i.test(f)).sort();
     const body = new Map(files.map((f) => [f, readText(path.join(MKT, f))]));
-    const roleOf = (t) => ((/^[ \t]*Роль:[ \t]*(\S+)/m).exec(t) || [, ''])[1].trim();
+    /* roleOf — на уровне модуля: им же меряет предмет группы [10]. */
     const ROLES = ['копия', 'журнал'];
     const GRAN = ['каждый раздел', 'весь файл'];
     /* Провенанс и разбор самих запретов: там перечисляются запрещённые слова, и
@@ -1046,6 +1071,61 @@ console.log('\n[9] Внешние каналы обещают то, что де�
       const wantMults = [String(Number(F.critMult)), String(Number(F.guildMult)), String(CODE.boostMult)].sort();
       ok(mults.join('/') === wantMults.join('/'),
         tag + ' множители — только те, что в CFG: ни один не устарел половинчато', { mults, wantMults });
+    }
+  }
+}
+
+console.log('\n[10] Витрина и внешний корпус мерятся одной мерой, а не двумя');
+{
+  /* [2] сверяет витрину с CODE (factsFrom по game.js и index.html), [9] сверяет
+     корпус с F (cfgFacts по game.js). Два парсера одного CFG — это ещё не сверка
+     текстов между собой: оба остаются зелёными, когда витрина обещает модератору
+     «+1000 монет за ролик», а пост обещает подписчику «+1500», потому что награды
+     за ролик в таблице меры [9] нет вовсе — список, решающий, что мерить в корпусе,
+     рос из того, что корпус уже умел сказать. Отсюда одна таблица на два предмета.
+
+     Инвариант не «тексты совпадают словами»: они разной длины и разным адресованы.
+     Инвариант в том, что количество, названное в обоих текстах, имеет одно значение,
+     и это значение из CFG. Названное одной стороной — не раскол, а покрытие: витрина
+     обязана знать про покупки, пост — про звания. Поэтому проверка по стороне
+     включается, только если сторона что-то назвала, а молчание обеих ловит отдельный
+     страж: строка меры, не названная никем, означает, что умер регэксп, а не что
+     число исчезло из двух текстов сразу. Тот же страж ловит и вырезанную строку —
+     см. контроль [10] в tools/negctl-copy.cjs. */
+  const MKT = path.join(ROOT, 'assets', 'marketing');
+  if (!fs.existsSync(MKT)) {
+    log('\u23f3 assets/marketing/ нет: группа пропущена');
+  } else {
+    const F = cfgFacts(readText(path.join(ROOT, 'game.js')));
+    /* Витрина — шесть блоков §4, без остального досье: §5 и §6 читает не кабинет. */
+    const vitrine = blocks.map((b) => b.text).join(' ');
+    const naruzhu = copyFlats(MKT).join(' ');
+
+    const MEASURE = [
+      { what: 'крит', re: /крит\s*\u00d7\s*(\d+)/g, want: String(F.critMult) },
+      { what: 'потолок раундов', re: /(\d+)\s*раунд(?:а|ов)\s*в\s*сутки/g, want: String(F.riskPerDay) },
+      { what: 'минимум ставки', re: /минимум\s*(\d+)\s*монет/g, want: String(F.minStake) },
+      { what: 'доли ставки', re: /(\d+\/\d+\/\d+)%/g, want: F.stakesPct.join('/') },
+      { what: 'выплата ва-банка', re: /(\d+\/\d+\/\d+)\s*минут/g, want: F.boostMinList.join('/') },
+      { what: 'награда за ролик', re: /за ролик[^)]*?\+(\d+) монет/g, want: String(F.adReward) },
+      { what: 'награда за репост', re: /репост\s*\(\+(\d+)/g, want: String(F.shareReward) },
+      { what: 'репостов в сутки', re: /репост\s*\(\+\d+,\s*([0-9]+|[а-яё]+)\s*в\s*сутки/g,
+        want: WORDS[F.sharePerDay] || String(F.sharePerDay) },
+    ];
+
+    ok(MEASURE.length >= 8, 'мера не пуста: строк таблицы хотя бы восемь', MEASURE.length);
+    ok(/\S/.test(vitrine), 'витрина прочитана: в §4 есть что мерить');
+    ok(/\S/.test(naruzhu), 'корпус прочитан: в копиях есть что мерить');
+
+    for (const m of MEASURE) {
+      const vals = (s) => [...new Set([...s.matchAll(m.re)].map((x) => x[1]))];
+      const vV = vals(vitrine), vN = vals(naruzhu);
+      ok(vV.length + vN.length > 0, m.what + ': названо хотя бы одной стороной',
+        { витрина: vV, наружу: vN });
+      if (vV.length) ok(vV.every((x) => x === m.want), 'витрина: ' + m.what + ' = ' + m.want, vV);
+      if (vN.length) ok(vN.every((x) => x === m.want), 'наружу: ' + m.what + ' = ' + m.want, vN);
+      if (vV.length && vN.length) ok(vV.join('/') === vN.join('/'),
+        m.what + ': витрина и наружу называют одно и то же число', { витрина: vV, наружу: vN });
     }
   }
 }
