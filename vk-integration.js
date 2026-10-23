@@ -66,7 +66,20 @@
   /* Таймауты (мс): bridge.send внутри WebView иногда не резолвится. */
   const T_INIT = 4000;
   const T_ADS_CHECK = 6000;
+  /* ПЕРВОЕ сообщение о показе и ВЕСЬ показ. Разведены нарочно: клиент вправе
+     ответить несколько раз подряд (loading → opened → closed), и прогресс
+     приходит быстро, а терминальное сообщение — после ролика. Держать на
+     первый ответ весь бюджет 90 с означало бы резать длинный ролик на 15-й
+     секунде тишины, а ждать терминального — все 90, пока идёт загрузка. */
+  const T_ADS_FIRST = 15000;
   const T_ADS_SHOW = 90000;
+  const ADS_POLL = 120;        // с какой частотой разбираем очередь сообщений показа
+  /* Имена событий клиента, несущих сообщение о показе. Вендор vk-bridge 3.0.2
+     объявляет их ровно три (src/types/data.ts:1547-1549): само имя метода,
+     «…Result» и «…Failed». Failed несёт error_type и приходит отказом промиса
+     send, поэтому в список не попадает. */
+  const ADS_EVENT_TYPES = ['VKWebAppShowNativeAds', 'VKWebAppShowNativeAdsResult'];
+  const ADS_ERR_TYPES = ['VKWebAppShowNativeAdsFailed'];
   const ADS_CACHE_TTL = 60000; // сколько верим ответу VKWebAppCheckNativeAds
 
   const st = {
@@ -317,13 +330,74 @@
     return st.adsCache;
   }
   /**
+   * Вердикт ОДНОГО сообщения клиента о показе.
+   *
+   * Терминальное — то, после которого показ больше не ждём:
+   *   { result: true }            → контракт вендора (data.ts:1280), успех;
+   *   success | completed         → то же самое именем типа (новые клиенты);
+   *   closed | ended | finished   → ролик ЗАКРЫТ, то есть состоялся. Именами
+   *                                'error'/'failed'/'load-error' клиент называет
+   *                                несостоявшийся показ, поэтому 'closed' —
+   *                                награда, а не отказ. Прежняя сборка считала
+   *                                'closed' досрочным закрытием и не выдавала
+   *                                награду за досмотренный ролик: флага
+   *                                «досмотрел до конца» в ответе VK нет, и
+   *                                отказывать по нему значило красть награду
+   *                                у честного игрока целиком.
+   * Нетерминальные — loading | opened: ролик ещё идёт, ждём следующее сообщение.
+   *
+   * @returns {{term:boolean, opened?:boolean, res?:{ok:boolean, code:string, message?:string}}|null}
+   *          null — сообщение не о показе (пустой объект, служебные поля).
+   */
+  function classifyAdShow(msg) {
+    if (!msg || typeof msg !== 'object') return null;
+    // Ошибочное сообщение моста: error_type/error_code приезжают и промисом,
+    // и подпиской — приводим к одному виду в обоих случаях.
+    if (msg.error_type != null || msg.error_code != null
+      || (msg.error_data && msg.error_data.error_code != null)) {
+      return { term: true, res: normalizeAdError(msg) };
+    }
+    if (msg.result === true) return { term: true, res: { ok: true, code: 'success' } };
+    if (msg.result === false) return { term: true, res: { ok: false, code: 'no_fill', message: AD_ERRORS[7] } };
+    const t = msg.type != null ? String(msg.type) : '';
+    if (!t) return null;
+    if (t === 'success' || t === 'completed') return { term: true, res: { ok: true, code: 'success' } };
+    if (t === 'closed' || t === 'ended' || t === 'finished') return { term: true, res: { ok: true, code: 'closed' } };
+    if (t === 'loading' || t === 'opened') return { term: false, opened: t === 'opened' };
+    if (t === 'load-error') return { term: true, res: { ok: false, code: 'load_error', message: AD_ERRORS[5] } };
+    if (t === 'error') {
+      return { term: true, res: { ok: false, code: 'error', message: AD_ERRORS[Number(msg.error_code) || 1] } };
+    }
+    if (t === 'failed') return { term: true, res: { ok: false, code: 'no_fill', message: AD_ERRORS[7] } };
+    if (t === 'skipped') {
+      return { term: true, res: { ok: false, code: 'skipped', message: 'Ролик закрыт досрочно — награда не начислена.' } };
+    }
+    // Неизвестный ответ обязан называть себя: без этого единственная диагностика
+    // для разработчика — «не включилось х2» со слов игрока.
+    return {
+      term: true,
+      res: { ok: false, code: 'unknown', message: 'Неизвестный ответ рекламы («' + t + '»). Попробуй ещё раз.' }
+    };
+  }
+
+  /**
    * ★ ГЛАВНАЯ ТОЧКА МОНЕТИЗАЦИИ ★
    * Показывает награждаемую рекламу (Reward Video) и возвращает результат.
    *
    * Порядок действий:
    *   1) VKWebAppCheckNativeAds { ad_format: 'reward' } — спрашиваем, есть ли ролик;
    *   2) VKWebAppShowNativeAds  { ad_format: 'reward' } — показываем ролик;
-   *   3) Разбираем ответ: награду отдаём ТОЛЬКО при успешном просмотре.
+   *   3) Дожимаемся ТЕРМИНАЛЬНОГО сообщения и только тогда решаем награду.
+   *
+   * Почему подписка, а не один ответ на send. Вендоренный vk-bridge 3.0.2
+   * резолвит промис ПЕРВЫМ сообщением с этим request_id и после этого забывает
+   * заявку (в бандле: V.resolve(t, …) обнуляет слот), а клиент по показу шлёт
+   * сообщения несколько раз подряд — EventReceiveNames объявляет
+   * 'VKWebAppShowNativeAds' | '…Result' | '…Failed' (src/types/data.ts:1547-1549).
+   * Заявка, доверяющая первому ответу, ловила «loading»/«opened» и объявляла их
+   * отказом: игрок досматривал ролик и не получал ни ×2, ни монет — ровно та
+   * жалоба, что пришла от игрока. Поэтому подписываемся ДО отправки, а промис
+   * send остаётся только первым сообщением (и источником ошибки).
    *
    * @param {string} scene — идентификатор точки монетизации для логов
    *                         ('double_income' | 'free_coins').
@@ -353,36 +427,75 @@
 
     // 2. ★ ЗДЕСЬ ВЫЗЫВАЕТСЯ РЕКЛАМА VK ★
     //    Метод: VKWebAppShowNativeAds, параметр ad_format: 'reward' (видео за награду).
-    let res;
+    //    Подписка ставится ДО отправки: без неё терминальное сообщение «closed»
+    //    прилетело бы уже после того, как промис send разойдётся на «loading»,
+    //    и досмотренный ролик стал бы отказом.
+    const bridge = st.bridge;
+    const inbox = [];
+    const seen = [];
+    let verdict = null, opened = false;
+
+    const feed = (msg) => {
+      if (verdict) return;
+      const v = classifyAdShow(msg);
+      if (!v) return;
+      seen.push(msg.type != null ? String(msg.type)
+        : (msg.result === true ? 'result:true' : (msg.result === false ? 'result:false' : 'error')));
+      if (v.opened) opened = true;
+      if (v.term) verdict = v.res;
+    };
+    const onShow = (event) => {
+      const d = event && event.detail;
+      if (!d) return;
+      const name = String(d.type || '');
+      if (ADS_EVENT_TYPES.indexOf(name) < 0 && ADS_ERR_TYPES.indexOf(name) < 0) return;
+      inbox.push(d.data);
+    };
+    let detach = null;
     try {
-      res = await withTimeout(
-        st.bridge.send('VKWebAppShowNativeAds', adRequest()),
-        T_ADS_SHOW,
+      if (typeof bridge.subscribe === 'function') {
+        bridge.subscribe(onShow);
+        if (typeof bridge.unsubscribe === 'function') detach = () => bridge.unsubscribe(onShow);
+      }
+    } catch (_) { /* мост без подписки: остаёмся на одном ответе send */ }
+
+    const started = Date.now();
+    let sendErr = null;
+    try {
+      feed(await withTimeout(
+        bridge.send('VKWebAppShowNativeAds', adRequest()),
+        T_ADS_FIRST,
         'show:' + scene
-      );
+      ));
     } catch (err) {
-      console.warn('[VK] VKWebAppShowNativeAds ошибка (' + scene + '):', err);
-      st.adsCache = null; // кэш протух — при следующем клике проверим заново
-      return normalizeAdError(err);
+      sendErr = err;
     }
 
-    // 3. Нормализация ответа.
-    //    Старые клиенты присылают { result: true },
-    //    новые — { type: 'success' | 'failed' | 'closed' | 'error' | 'load-error' }.
-    const type = res && res.type
-      ? String(res.type)
-      : (res && res.result === true ? 'success' : 'unknown');
-
-    console.info('[VK] VKWebAppShowNativeAds (' + scene + ') ->', type, res);
-    st.adsCache = null;
-
-    if (type === 'success' || type === 'completed') return { ok: true, code: 'success' };
-    if (type === 'load-error') return { ok: false, code: 'load_error', message: AD_ERRORS[5] };
-    if (type === 'error') return { ok: false, code: 'error', message: AD_ERRORS[(res && res.error_code) || 1] };
-    if (type === 'closed' || type === 'failed' || type === 'skipped') {
-      return { ok: false, code: 'skipped', message: 'Ролик не досмотрен — награда не начислена.' };
+    /* 3. Дожим терминального сообщения. Опрос очереди, а не «вечный» промис:
+          mock-мосты прогонов (jsdom) доставляют ответ только через send и обязаны
+          давать ровно тот же вердикт, что живой клиент с лестницей. */
+    while (!verdict && Date.now() - started < T_ADS_SHOW) {
+      while (inbox.length && !verdict) feed(inbox.shift());
+      if (verdict || sendErr) break;
+      await delay(ADS_POLL);
     }
-    return { ok: false, code: 'unknown', message: AD_ERRORS[7] };
+    if (detach) { try { detach(); } catch (_) { /* уже снята */ } }
+    st.adsCache = null;                   // кэш протух: при следующем клике проверим заново
+
+    if (!verdict && sendErr) {
+      console.warn('[VK] VKWebAppShowNativeAds ошибка (' + scene + '):', sendErr);
+      verdict = normalizeAdError(sendErr);
+    }
+    if (!verdict) {
+      verdict = {
+        ok: false, code: 'timeout',
+        message: opened
+          ? 'Ролик не завершился. Попробуй ещё раз.'
+          : 'Реклама зависла при загрузке. Попробуй ещё раз.'
+      };
+    }
+    console.info('[VK] VKWebAppShowNativeAds (' + scene + ') ->', seen.join(' → ') || 'нет ответа', verdict);
+    return verdict;
   }
 
   /* ======================================================================

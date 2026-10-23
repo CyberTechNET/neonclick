@@ -720,6 +720,16 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .vip__have b { font-size: 12.5px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--gold); }
 .vip__have i { font-size: 9px; font-style: normal; color: var(--muted); }
 .buy--vip { flex: 1 1 auto; min-width: 0; color: #1a0413; background: linear-gradient(135deg, var(--magenta), #ff8ae8); box-shadow: 0 6px 18px rgba(255, 43, 214, .3); }
+/* Строка суточной выдачи ×2. Она отвечает на вопрос «когда снова», которого
+   карточка раньше не задавала вовсе: выдача идемпотентна по суткам UTC, и без
+   срока игрок видел «VIP активен» там, где надо было видеть «будет завтра».
+   Золотой цвет — про награду, а не про ограничение; правило [hidden] прячет
+   её, пока статуса нет. */
+.vip__next {
+  margin: 0; padding: 6px 8px; border-radius: 8px;
+  font-size: 10.5px; line-height: 1.35; color: var(--gold);
+  background: rgba(255, 214, 102, .08); border: 1px solid var(--line);
+}
 .vip__note { margin: 0; font-size: 10.5px; line-height: 1.35; color: var(--muted); }
 
 /* Активный статус светится только тогда, когда он есть на самом деле. */

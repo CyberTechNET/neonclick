@@ -476,6 +476,7 @@
     // --- VIP (раздел 13e) ---
     vipCard: $('vipCard'), vipState: $('vipState'), vipUntil: $('vipUntil'),
     vipHonor: $('vipHonor'), vipNote: $('vipNote'), btnVip: $('btnVip'), vipCta: $('vipCta'),
+    vipNext: $('vipNext'),
     modal: $('modal'), modalTitle: $('modalTitle'), modalText: $('modalText'),
     modalOk: $('modalOk'), modalCancel: $('modalCancel'),
     btnSound: $('btnSound'), btnReset: $('btnReset'), toasts: $('toasts'),
@@ -1307,9 +1308,12 @@
 
     const res = await claimReward('double_income');
     if (!res) return;
-    adLastShown.boost = Date.now();
 
+    /* Неудачный показ кулдаун НЕ заводит: штрафовать 12 секундами игрока,
+       который не получил ни ролика, ни награды, — значит лишать его и права
+       попробовать сразу. Счётчик просмотров (S.watched) тоже не растёт. */
     if (!res.ok) return onAdFail(res);
+    adLastShown.boost = Date.now();
 
     // ★ НАГРАДА ВЫДАННА ★
     const extend = isBoostActive();
@@ -1355,9 +1359,10 @@
 
     const res = await claimReward('free_coins');
     if (!res) return;
-    adLastShown.coins = Date.now();
 
+    // Тот же порядок, что у буста: кулдаун заводит только состоявшийся показ.
     if (!res.ok) return onAdFail(res);
+    adLastShown.coins = Date.now();
 
     // ★ НАГРАДА ВЫДАННА ★
     grant(CFG.freeCoinsReward, 'reward_video');
@@ -2353,6 +2358,47 @@
   }
 
   /**
+   * Момент следующей суточной выдачи ×2 и её природа.
+   *
+   * «Когда» бывает двух совсем разных видов, и назвать игроку одно вместо
+   * другого — значит соврать:
+   *   • сутки УЖЕ выданы (vipDay === сегодня) → выдача привязана к рубежу
+   *     календарных суток UTC, следующее окно наступит в (day + 1) * DAY_MS;
+   *   • сутки ЕЩЁ НЕ выданы → целая выдача не влезла за край maxBoostAheadMs
+   *     (grantVipDay режет целое, а не половинчатое), и освободится ровно тогда,
+   *     когда до края доедет dailyMs: at = boostUntil + dailyMs − maxBoostAheadMs.
+   * Второй вид — не исключение из правил, а штатная ветка игрока, который топчет
+   * буст на пределе; прятать её от него не за что.
+   * @returns {{at:number, pending:boolean}|null} null — VIP не активен.
+   */
+  function vipNextGrant(now) {
+    const t = now || Date.now();
+    if (!vipActive(t)) return null;
+    const day = dayIndex(t);
+    if ((S.vipDay || 0) !== day) {
+      const at = (S.boostUntil || 0) + VIP.dailyMs - CFG.anticheat.maxBoostAheadMs;
+      return { at: at > t ? at : t, pending: true };
+    }
+    return { at: (day + 1) * DAY_MS, pending: false };
+  }
+
+  /**
+   * Подпись суточной выдачи — то, чего карточке не хватало с первого дня: при
+   * идемпотентности по суткам игрок видел «VIP активен» и не имел шанса понять,
+   * что ×2 придёт только завтра. Пустая строка — VIP не активен.
+   */
+  function fmtVipNext(now) {
+    const g = vipNextGrant(now);
+    if (!g) return '';
+    const dailyMin = Math.round(VIP.dailyMs / 60000);
+    const wait = g.at - (now || Date.now());
+    const when = wait <= 1000 ? 'прямо сейчас' : 'через ' + fmtDur(wait);
+    return g.pending
+      ? dailyMin + ' мин добычи ×2 за сегодня задержаны пределом буста — будут ' + when + '.'
+      : 'Следующие ' + dailyMin + ' мин добычи ×2 — ' + when + ' (сутки считаются по UTC).';
+  }
+
+  /**
    * Дневная выдача времени буста. Идемпотентна по суткам UTC — тот же приём,
    * что у rdRedeemed/rdRedN и shareDay/shareN: тик идёт 5 раз в секунду, и без
    * vipDay игра выдала бы 30 минут буста каждые 200 мс.
@@ -2412,7 +2458,7 @@
     // Первый день отдаём тем же механизмом, что и последующие, а не отдельной
     // веткой: если буст уже на пределе, vipDay останется не проставлен и тик
     // догонит выдачу сам. Иначе покупка молча съела бы первые сутки.
-    grantVipDay(now);
+    const granted = grantVipDay(now);
     dirty = true;
     save(true);
     cloudPush(true);
@@ -2422,8 +2468,20 @@
     const c = stageCenter();
     floatText(c.x, c.y, 'VIP', 'crit');
     burst(c.x, c.y, 40, PAL_CRIT, 2);
+    /* Покупка без первой выдачи — не обман, а отсрочка, но игрок обязан видеть
+       разницу: «нажал, честь ушла, ×2 нет» выглядит как сломанная кнопка. Ровно
+       эта ветка и была единственной, где карточка молчала. Причин отсрочки две,
+       и они разные: сутки этих же суток уже отданы (повторная покупка) либо целая
+       выдача не влезла за край буста — врать про них одним текстом нельзя. */
+    const nx = vipNextGrant(now);
+    const eta = nx ? (nx.at > now ? 'через ' + fmtDur(nx.at - now) : 'прямо сейчас') : '';
     toast('👑 VIP на ' + VIP.days + ' суток: добыча ×2 каждый день по '
-      + Math.round(VIP.dailyMs / 60000) + ' мин', 'good', 5000);
+      + Math.round(VIP.dailyMs / 60000) + ' мин'
+      + (granted || !nx ? ''
+        : '. Следующая выдача — ' + eta + (nx.pending
+          ? ': буст уперся в предел ' + Math.round(CFG.anticheat.maxBoostAheadMs / 60000) + ' мин'
+          : ', сутки этих календарных суток уже отданы')),
+      'good', 5000);
     return true;
   }
 
@@ -2433,6 +2491,7 @@
     const now = Date.now();
     const on = vipActive(now);
     const honor = Math.floor(S.rdHonor || 0);
+    const block = vipBlock();
 
     setText(el.vipState, on ? 'VIP активен' : 'не активен');
     setText(el.vipUntil, on ? fmtVipLeft(vipLeft(now)) : '—');
@@ -2443,12 +2502,29 @@
     // (инвариант 3 раздела 13d: роль — справка от VK, а не купленная отметка).
     if (el.guildCard) el.guildCard.classList.toggle('is-vip', on);
 
-    if (el.btnVip) el.btnVip.disabled = !!vipBlock();
+    if (el.btnVip) el.btnVip.disabled = !!block;
     setText(el.vipCta, VIP.cost + ' чести · ' + VIP.days + ' суток');
-    setText(el.vipNote, on
+    /* Неактивная кнопка обязана называть причину. Молча севшая кнопка читается
+       игроком как «игра сломалась» или «я уже нажимал сегодня», а не как «не
+       хватает чести» — и ровно этот вопрос пришёл в поддержку. Суточного лимита
+       на покупку здесь нет вообще: есть только остаток чести, и сказать надо
+       именно про него. Причина дописывается в обеих ветках, потому что «VIP
+       активен» и «продлить нельзя» — разные состояния одного экрана. */
+    const offNote = 'Статус покупается честью рейда и отдаёт время добычи ×2. '
+      + 'Честь расходуется та же, что и на обмен: новых монет ни у кого не появится.';
+    const baseNote = on
       ? 'Каждые сутки статус добавляет ' + Math.round(VIP.dailyMs / 60000)
         + ' мин добычи ×2. Монет VIP не выдаёт.'
-      : 'Статус покупается честью рейда и отдаёт время добычи ×2. Честь расходуется та же, что и на обмен: новых монет ни у кого не появится.');
+      : offNote;
+    setText(el.vipNote, block === 'poor'
+      ? baseNote + ' Для новой покупки нужно ' + VIP.cost + ' чести, сейчас ' + fmt(honor) + '.'
+      : baseNote);
+    /* Строка суточной выдачи: пока её не было, «VIP активен» и «×2 за сегодня
+       уже истрачен» были неразличимы, а вторая покупка тех же суток выглядела
+       мёртвой кнопкой, которая ничего не даёт. */
+    const nextTxt = fmtVipNext(now);
+    if (el.vipNext) el.vipNext.hidden = !nextTxt;
+    setText(el.vipNext, nextTxt || '—');
   }
 
   /* ======================================================================
@@ -3289,12 +3365,19 @@
            невозможно, поэтому тесты обязаны уметь отмотать vipDay назад и
            упереться в край maxBoostAheadMs. Таймстампы отдаются через
            Math.floor, а не |0: |0 обрезает int64-дату до int32 и врёт. */
-        vip: () => ({
-          until: Math.floor(S.vipUntil || 0), day: Math.floor(S.vipDay || 0),
-          active: vipActive(), left: vipLeft(), block: vipBlock(),
-          boost: Math.floor(S.boostUntil || 0), honor: Math.floor(S.rdHonor || 0),
-          cost: VIP.cost, days: VIP.days, dailyMs: VIP.dailyMs
-        }),
+        vip: () => {
+          const ng = vipNextGrant() || { at: 0, pending: false };
+          return {
+            until: Math.floor(S.vipUntil || 0), day: Math.floor(S.vipDay || 0),
+            active: vipActive(), left: vipLeft(), block: vipBlock(),
+            boost: Math.floor(S.boostUntil || 0), honor: Math.floor(S.rdHonor || 0),
+            cost: VIP.cost, days: VIP.days, dailyMs: VIP.dailyMs,
+            /* Момент следующей суточной выдачи и её природа — то, что карточка
+               показывает игроку, и то, что тест обязан уметь читать. */
+            nextAt: Math.floor(ng.at), nextPending: !!ng.pending,
+            nextTxt: fmtVipNext()
+          };
+        },
         buyVip: () => buyVip(),
         /** Отматывает vipDay на n суток назад и отдаёт тик: имитация прошедших суток. */
         backVipDay: (n) => {

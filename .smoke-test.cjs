@@ -121,15 +121,21 @@ const seedV4 = (over) => signV4(Object.assign({
 function mockBridge(cfg) {
   const c = Object.assign({ fill: true, type: 'success', errorCode: 0 }, cfg || {});
   const calls = [];
+  const subs = [];
   return {
     calls: calls,
+    subs: subs,
     /* embedded:false подставляет клиент, который НЕ поднял признак WebView
        (обычный браузер с открытой ссылкой vk.com/app… либо VK мостом, где
        isEmbedded() не сработал). Тогда остаётся разбор launch-параметров. */
     isEmbedded: () => c.embedded !== false,
     supports: () => true,
     supportsAsync: async () => true,
-    subscribe: () => {},
+    /* Подписка настоящая: показ рекламы клиент вправе вести лестницей сообщений
+       (loading → opened → closed), и именно по подписке эти сообщения приезжают.
+       Пустой заглушкой проверить «досмотренный ролик → награда» было бы нельзя. */
+    subscribe: (f) => { subs.push(f); },
+    unsubscribe: (f) => { const i = subs.indexOf(f); if (i >= 0) subs.splice(i, 1); },
     send: async (name, params) => {
       /* ★ КОНТРАКТ РЕКЛАМЫ (vk-bridge 3.x): ShowNativeAdsRequest/CheckNativeAdsRequest
          несут поле ad_format. Запрос с чужим именем параметра настоящий клиент VK
@@ -143,6 +149,18 @@ function mockBridge(cfg) {
         if (!adOk) { const e = new Error('invalid ad_format'); e.error_data = { error_code: 3, error_reason: 'mock' }; throw e; }
         if (!c.fill) return { type: 'failed' };
         if (c.errorCode) { const e = new Error('ads error'); e.error_data = { error_code: c.errorCode }; throw e; }
+        /* ladder — тот самый многоступенчатый ответ: промис send закрывается
+           ПЕРВЫМ сообщением (так делает вендорный vk-bridge 3.0.2), остальные
+           приезжают подписчикам. Мок воспроизводит обе половины, иначе лестница
+           в тестах не существовала бы вовсе. */
+        if (c.ladder) {
+          setTimeout(() => {
+            subs.slice().forEach((f) => c.ladder.slice(1).forEach((t) => {
+              f({ detail: { type: 'VKWebAppShowNativeAds', data: { type: t } } });
+            }));
+          }, 20);
+          return { type: c.ladder[0] };
+        }
         return { type: c.type };
       }
       /* ★ КОНТРАКТ ШЕРИНГА: ответ LinkShareResult[] (пустой массив = отказ).
@@ -647,14 +665,59 @@ function mockOutsideBridge() {
   ok(/недоступна/.test(b.d.getElementById('adNote').textContent), 'подсказка о недоступности рекламы', b.d.getElementById('adNote').textContent);
   b.dom.window.close();
 
-  // 8.3 — ролик закрыт досрочно
+  // 8.3 — ролик ЗАКРЫТ (type:'closed'): показ состоялся, награда обязана доехать.
+  //       Прежняя сборка принимала 'closed' за досрочный выход и не выдавала
+  //       награду за досмотренный ролик — ровно та жалоба, с которой игрок
+  //       пришёл 23.10.2026 («посмотрел рекламу, ×2 не включился»). Флага
+  //       «досмотрел до конца» в ответе VK нет, а отказ по 'closed' крал награду
+  //       у честного игрока целиком.
   const m3 = mockBridge({ fill: true, type: 'closed' });
   const c = await makeGame({ url: VK_URL, vkBridge: m3, seed: freshSeed() });
   c.d.getElementById('btnCoins').dispatchEvent(new c.w.MouseEvent('click'));
-  await sleep(400);
-  ok(c.w.NEON.state().coins === 0, 'за досрочно закрытый ролик награды нет');
-  ok(/не досмотрен/.test(c.d.getElementById('toasts').textContent), 'текст о недосмотренном ролике', c.d.getElementById('toasts').textContent);
+  await sleep(500);
+  ok(c.w.NEON.state().coins === 1000, "закрытый ролик (type:'closed') оплачен наградой",
+    c.w.NEON.state().coins);
   c.dom.window.close();
+
+  // 8.3a — явный досрочный выход (type:'skipped'): вот здесь отказа быть и положено.
+  const m3a = mockBridge({ fill: true, type: 'skipped' });
+  const ca = await makeGame({ url: VK_URL, vkBridge: m3a, seed: freshSeed() });
+  ca.d.getElementById('btnCoins').dispatchEvent(new ca.w.MouseEvent('click'));
+  await sleep(500);
+  ok(ca.w.NEON.state().coins === 0, "за type:'skipped' награды нет");
+  ok(/закрыт досрочно/.test(ca.d.getElementById('toasts').textContent),
+    'текст о досрочно закрытом ролике', ca.d.getElementById('toasts').textContent);
+  ca.dom.window.close();
+
+  // 8.3b — ЛЕСТНИЦА СООБЩЕНИЙ loading → opened → closed. Промис send закрывается
+  //        ПЕРВЫМ сообщением (вендорный vk-bridge 3.0.2 так и делает), поэтому
+  //        заявка, доверяющая одному ответу, объявляла «loading» отсутствием
+  //        роликов и крала награду за досмотренный ролик целиком.
+  const m3b = mockBridge({ fill: true, ladder: ['loading', 'opened', 'closed'] });
+  const cb2 = await makeGame({ url: VK_URL, vkBridge: m3b, seed: freshSeed({ upAuto: 1 }) });
+  cb2.d.getElementById('btnDouble').dispatchEvent(new cb2.w.MouseEvent('click'));
+  await sleep(600);
+  ok(cb2.w.NEON.state().boostUntil > Date.now() + 4 * 60000,
+    'лестница сообщений не обнулила награду: ×2 включён после досмотренного ролика',
+    cb2.w.NEON.state().boostUntil - Date.now());
+  ok(Math.floor(cb2.w.NEON.state().coins) < 100,
+    'и ничего лишнего: буст — это время, а не разовое начисление монет',
+    Math.floor(cb2.w.NEON.state().coins));
+  cb2.dom.window.close();
+
+  // 8.3c — отказ кулдаун НЕ заводит: игрок, не получивший ни ролика, ни награды,
+  //        вправе попробовать сразу. Штраф 12 с за чужую ошибку — это ложь.
+  const m3c = mockBridge({ fill: true, type: 'skipped' });
+  const cc2 = await makeGame({ url: VK_URL, vkBridge: m3c, seed: freshSeed() });
+  cc2.d.getElementById('btnCoins').dispatchEvent(new cc2.w.MouseEvent('click'));
+  await sleep(500);
+  cc2.d.getElementById('btnCoins').dispatchEvent(new cc2.w.MouseEvent('click'));
+  await sleep(500);
+  const shows = m3c.calls.filter((x) => x === 'VKWebAppShowNativeAds:reward').length;
+  ok(shows === 2, 'неудачный показ не поставил кулдаун: show ушёл дважды', shows);
+  ok(cc2.w.NEON.state().watched === 0, 'неудачные показы не числятся просмотренными',
+    cc2.w.NEON.state().watched);
+  cc2.dom.window.close();
 
   // 8.4 — ошибка рекламного SDK (code 3 = дневной лимит)
   const m4 = mockBridge({ fill: true, errorCode: 3 });
@@ -1412,6 +1475,13 @@ function mockOutsideBridge() {
       [D.getElementById('raidTier').textContent, D.getElementById('raidTierHint').textContent]);
     ok(D.getElementById('btnRaidRedeem').disabled === true,
       '11.8 на нулевой чести кнопка обмена выключена: дразниться наградой нельзя');
+    /* Та же причина — у выключенной кнопки VIP, но уже без купленного срока:
+       игрок, который никогда не нажимал, обязан прочитать «нужно 40, сейчас 0»,
+       а не «кнопка не работает». */
+    ok(D.getElementById('vipNote').textContent.indexOf(
+      'Для новой покупки нужно ' + U.vip().cost + ' чести, сейчас 0.') >= 0,
+      '11.8 VIP без чести объясняет, почему кнопка выключена',
+      D.getElementById('vipNote').textContent);
     ok(U.raid().week === WEEK(), '11.8 рейд обслужен и вне VK: неделя текущая', U.raid());
     ok(D.getElementById('raidWeek').textContent.trim().length > 0
       && D.getElementById('raidWeek').textContent !== '—',
@@ -1430,6 +1500,10 @@ function mockOutsideBridge() {
         '11.9 без покупки VIP нет: until=0, а не выдуманный срок', V.vip());
       ok(D9.getElementById('btnVip').disabled === false,
         '11.9 при чести выше цены кнопка активна', V.vip());
+      /* Строка следующей выдачи спрятана, пока статуса нет: обещать «×2 будет
+         завтра» тому, у кого завтра ничего не наступит, — декорация. */
+      ok(D9.getElementById('vipNext').hidden === true,
+        '11.9 без VIP строка суточной выдачи не обещает', D9.getElementById('vipNext').textContent);
 
       const coins9 = Math.floor(V.state().coins);
       ok(V.buyVip() === true, '11.9 срок куплен');
@@ -1442,6 +1516,35 @@ function mockOutsideBridge() {
         '11.9 срок активен и равен CFG.vip.days суток', V.vip());
       ok(V.vip().boost >= Date.now() + V.vip().dailyMs - 10000,
         '11.9 первый день выдан сразу: буст продлён не меньше чем на CFG.vip.dailyMs', V.vip());
+
+      /* ── СРОК СЛЕДУЮЩЕЙ ВЫДАЧИ. Ровно этого карточка не знала с первого дня:
+            выдача идемпотентна по суткам UTC, поэтому второй клик в тех же сутках
+            списывал честь и молчал — игрок читал это как «уже нажимал сегодня»
+            или как сломанную кнопку. Теперь карточка обязана назвать, когда ×2
+            придёт снова. ── */
+      const v9 = V.vip();
+      const nextDayUtc = (Math.floor(Date.now() / 86400000) + 1) * 86400000;
+      ok(v9.nextPending === false,
+        '11.9 сразу после покупки выдача считается по рубежу суток, а не «задержанной»', v9);
+      ok(v9.nextAt === nextDayUtc,
+        '11.9 момент следующей выдачи — начало следующих суток UTC', [v9.nextAt, nextDayUtc]);
+      ok(D9.getElementById('vipNext').hidden === false,
+        '11.9 при активном VIP строка выдачи видна');
+      ok(/мин добычи ×2/.test(D9.getElementById('vipNext').textContent)
+        && /через/.test(D9.getElementById('vipNext').textContent),
+        '11.9 строка выдачи называет и награду, и срок', D9.getElementById('vipNext').textContent);
+
+      /* Повторная покупка ТЕХ ЖЕ суток: честь уходит, срок растёт, а выдача
+         приходит только на рубеже суток. Именно эта ветка выглядела как «уже
+         нажимал сегодня / ничего не произошло». Тост обязан назвать настоящую
+         причину, а не предел буста. */
+      V.state().rdHonor = V.vip().cost;
+      ok(V.buyVip() === true, '11.9 второй срок тех же суток куплен: лимита на покупку нет');
+      ok(V.vip().left > (2 * V.vip().days - 1) * 86400000,
+        '11.9 срок сложился, а не обнулился: 7 + 7 суток', V.vip().left);
+      ok(/сутки этих календарных суток уже отданы/.test(D9.getElementById('toasts').textContent),
+        '11.9 отсрочка повторной покупки названа её настоящей причиной',
+        D9.getElementById('toasts').textContent);
       ok(D9.getElementById('guildCard').classList.contains('is-vip'),
         '11.9 значок статуса сел на карточку гильдии', D9.getElementById('guildCard').className);
       ok(D9.getElementById('guildState').textContent !== 'Участник ✓',
@@ -1472,12 +1575,43 @@ function mockOutsideBridge() {
         '11.9 освобождение края догоняет отложенную выдачу тех же суток: награда не сгорела',
         V.vip());
 
+      /* Задержанная выдача обязана быть названа СВОЕЙ причиной: «буст на пределе»
+         — не то же самое, что «выдачи нет». Игрок, топчущий буст, должен видеть
+         минуту, когда освободится место, а не гадать. */
+      V.state().vipDay = Math.floor(Date.now() / 86400000) - 1;   // сутки ещё не выданы
+      V.state().boostUntil = Date.now() + 90 * 60000;             // и буст на пределе
+      await sleep(250);
+      const vp9 = V.vip();
+      ok(vp9.nextPending === true,
+        '11.9 невыданные сутки при полном бусте помечены задержанными', vp9);
+      ok(Math.abs(vp9.nextAt - (Date.now() + vp9.dailyMs)) < 3000,
+        '11.9 срок задержки — момент, когда до края доедет ровно dailyMs',
+        [vp9.nextAt, Date.now() + vp9.dailyMs]);
+      ok(/задержаны/.test(D9.getElementById('vipNext').textContent),
+        '11.9 строка выдачи называет причину задержки', D9.getElementById('vipNext').textContent);
+      /* Покупка в таком состоянии тоже проходит (лимит на покупку — не здесь),
+         и её тост обязан сказать про край буста, а не про отданные сутки. */
+      V.state().rdHonor = V.vip().cost;
+      ok(V.buyVip() === true, '11.9 покупка при полном бусте проходит: срок не режется');
+      ok(/буст уперся в предел/.test(D9.getElementById('toasts').textContent),
+        '11.9 отсрочка из-за края буста названа её настоящей причиной',
+        D9.getElementById('toasts').textContent);
+      V.state().boostUntil = 0;                                    // край свободен
+
       /* Отказ при нехватке чести не имеет права тронуть уже купленный срок. */
       V.state().rdHonor = V.vip().cost - 1;
       const untilBefore = V.vip().until;
       ok(V.buyVip() === false, '11.9 не хватает чести — покупки нет');
       ok(V.vip().until === untilBefore,
         '11.9 отказ не тронул уже купленный срок', [untilBefore, V.vip().until]);
+      ok(D9.getElementById('btnVip').disabled === true,
+        '11.9 при нехватке чести кнопка выключена');
+      /* И кнопка обязана объяснить себя текстом: молча севшая кнопка читается
+         как «игра сломалась», а не как «не хватает чести». */
+      ok(D9.getElementById('vipNote').textContent.indexOf(
+        'Для новой покупки нужно ' + V.vip().cost + ' чести, сейчас ' + (V.vip().cost - 1) + '.') >= 0,
+        '11.9 неактивная кнопка называет причину: сколько надо и сколько есть',
+        D9.getElementById('vipNote').textContent);
 
       /* Античит: нарисованный срок режется потолком по rdLife, а не принимается. */
       const forged = Date.now() + 3650 * 86400000;        // десять лет

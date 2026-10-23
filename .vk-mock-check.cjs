@@ -120,9 +120,22 @@ const MOCK = () => {
         window.__adStartedAt = Date.now();
         if (scen === 'closed') return later({ type: 'closed' }, AD_MS);
         if (scen === 'failed') return later({ type: 'failed' }, AD_MS);
+        if (scen === 'skipped') return later({ type: 'skipped' }, AD_MS);
         if (scen === 'limit') return laterErr(3, AD_MS);
         if (scen === 'weird') return later({ type: 'undefined-type' }, AD_MS);
         if (scen === 'legacy') return later({ result: true }, AD_MS);
+        /* ★ ЛЕСТНИЦА СООБЩЕНИЙ. Промис send закрывается ПЕРВЫМ сообщением
+           (так устроен вендорный vk-bridge 3.0.2: V.resolve обнуляет слот заявки),
+           а «opened» и «closed» приезжают уже подписчикам, после ролика. Прежняя
+           сборка видела «loading», объявляла его отсутствием роликов и не
+           платила за досмотренный ролик — эту регрессию проверяет именно он. */
+        if (scen === 'ladder') {
+          setTimeout(function () {
+            window.__emit('VKWebAppShowNativeAds', { type: 'opened' });
+            window.__emit('VKWebAppShowNativeAds', { type: 'closed' });
+          }, AD_MS);
+          return later({ type: 'loading' }, 30);
+        }
         return later({ type: 'success' }, AD_MS);
       }
       /* ★ КОНТРАКТ ШЕРИНГА (vk-bridge 3.x, data.d.ts:989/1215):
@@ -276,12 +289,16 @@ async function scenario(browser, scen, extraQ) {
   await s.page.close();
 
   /* ================= 3. ОТКАЗЫ VK ================= */
+  /* Состав отказов изменён 23.10.2026 по жалобе игрока: 'closed' — это НЕ отказ.
+     Клиент не присылает флага «досмотрел до конца», и прежнее чтение 'closed'
+     как досрочного выхода лишало награды ровно тех, кто ролик досмотрел.
+     Досрочный выход теперь назван своим именем — 'skipped'. */
   const fails = [
     { scen: 'nofill', want: '\u0420\u0435\u043a\u043b\u0430\u043c\u0430\u0435\u0449\u0451\u043d\u0435\u0433\u043e\u0442\u043e\u0432\u0430', note: '\u043d\u0435\u0442\u0437\u0430\u043f\u043e\u043b\u043d\u0435\u043d\u0438\u044f', show: false, label: 'нет заполнения (check → result:false)' },
-    { scen: 'closed', want: '\u0420\u043e\u043b\u0438\u043a\u043d\u0435\u0434\u043e\u0441\u043c\u043e\u0442\u0440\u0435\u043d', show: true, label: 'закрыл досрочно (type: closed)' },
-    { scen: 'failed', want: '\u0420\u043e\u043b\u0438\u043a\u043d\u0435\u0434\u043e\u0441\u043c\u043e\u0442\u0440\u0435\u043d', show: true, label: 'сорвался (type: failed)' },
+    { scen: 'failed', want: '\u0421\u0435\u0439\u0447\u0430\u0441\u043d\u0435\u0442\u0441\u0432\u043e\u0431\u043e\u0434\u043d\u044b\u0445\u0440\u043e\u043b\u0438\u043a\u043e\u0432', show: true, label: 'показ не состоялся (type: failed)' },
+    { scen: 'skipped', want: '\u0420\u043e\u043b\u0438\u043a\u0437\u0430\u043a\u0440\u044b\u0442\u0434\u043e\u0441\u0440\u043e\u0447\u043d\u043e', show: true, label: 'закрыт досрочно (type: skipped)' },
     { scen: 'limit', want: '\u0414\u043d\u0435\u0432\u043d\u043e\u0439\u043b\u0438\u043c\u0438\u0442', show: true, label: 'ошибка SDK error_code=3 (лимит)' },
-    { scen: 'weird', want: '\u0421\u0435\u0439\u0447\u0430\u0441\u043d\u0435\u0442\u0441\u0432\u043e\u0431\u043e\u0434\u043d\u044b\u0445\u0440\u043e\u043b\u0438\u043a\u043e\u0432', show: true, label: 'непонятный ответ SDK → резервный текст' }
+    { scen: 'weird', want: '\u041d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u044b\u0439\u043e\u0442\u0432\u0435\u0442\u0440\u0435\u043a\u043b\u0430\u043c\u044b', show: true, label: 'непонятный ответ SDK → текст называет его сам' }
   ];
   for (const f of fails) {
     log('\n[3] ?vk=' + f.scen + ' — ' + f.label);
@@ -299,6 +316,41 @@ async function scenario(browser, scen, extraQ) {
     ok(await toastHas(s.page, f.want), '  «красивый» текст отказа: ' + f.want.slice(0, 24) + '…', await toastAll(s.page));
     if (f.note) ok(flat(note).indexOf(f.note) > -1, '  подсказка обновлена на «нет заполнения»', note);
     ok(await s.page.$eval('#btnCoins', (e) => !e.disabled), '  кнопка разблокирована после отказа');
+    ok(s.errs.length === 0, '  ошибок страницы нет', s.errs);
+    await s.page.close();
+  }
+
+  /* ================= 3b. ДОСМОТРЕННЫЙ РОЛИК ОБЯЗАН БЫТЬ ОПЛАЧЕН =================
+     Две формы «ролик посмотрели», из-за которых награда терялась молча:
+       ?vk=closed  — один терминальный ответ;
+       ?vk=ladder  — лестница loading → opened → closed (промис закрывается
+                     первым сообщением, остальные приезжают подписчиком).
+     Обе обязаны платить и по 1000 монет, и по ×2 на 5 минут. */
+  for (const scen of ['closed', 'ladder']) {
+    log('\n[3b] ?vk=' + scen + ' — досмотренный ролик вознаграждён');
+    s = await scenario(browser, scen);
+    await s.page.click('.tab[data-tab="bonus"]');
+    await sleep(250);
+    const w0 = await coins(s.page);
+    await s.page.click('#btnCoins');
+    await sleep(2000);
+    const w1 = await coins(s.page);
+    ok(Math.round(w1 - w0) === 1000, '  ' + scen + ': награда за монеты доехала', [w0, w1]);
+    await s.page.evaluate(() => window.NEON.clearCooldown());
+    await sleep(150);
+    await s.page.click('.tab[data-tab="shop"]');
+    await sleep(150);
+    await s.page.click('#buyAuto');                    // без авто-майнинга удваивать нечего
+    await sleep(250);
+    await s.page.click('.tab[data-tab="bonus"]');
+    await s.page.click('#btnDouble');
+    await sleep(2000);
+    const bst = await s.page.evaluate(() => ({
+      left: window.NEON.state().boostUntil - Date.now(),
+      display: getComputedStyle(document.getElementById('boost')).display
+    }));
+    ok(bst.left > 4 * 60000, '  ' + scen + ': ×2 включён на 5 минут', bst);
+    ok(bst.display !== 'none', '  ' + scen + ': плашка буста видна', bst.display);
     ok(s.errs.length === 0, '  ошибок страницы нет', s.errs);
     await s.page.close();
   }

@@ -265,6 +265,10 @@
             <span class="vip__have"><b id="vipHonor">0</b><i>честь</i></span>
             <button class="buy buy--vip" id="btnVip" type="button" disabled><span id="vipCta">40 чести &middot; 7 суток</span></button>
           </div>
+          <!-- Суточная выдача ×2 идемпотентна по суткам UTC: без этой строки
+               «VIP активен» и «сегодня уже выдали» неразличимы, и повторная
+               покупка выглядит как мёртвая кнопка. Подставляет renderVip(). -->
+          <p class="vip__next" id="vipNext" hidden>&mdash;</p>
           <p class="vip__note" id="vipNote">Статус покупается честью рейда и отдаёт время добычи &times;2. Новых монет ни у кого не появится.</p>
         </section>
       </div>
